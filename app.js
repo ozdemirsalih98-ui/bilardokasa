@@ -285,7 +285,7 @@ function masalarRenderle(masalar, kategoriler) {
     return `
       <div class="kategori-grup">
         <h3 class="kategori-baslik">${grup.ad}</h3>
-        <div class="masa-grid">${masalar.map(masaKartiHtml).join("")}</div>
+        <div class="masa-grid">${masalar.map(m => masaKartiHtml(m, grup.ad)).join("")}</div>
       </div>
     `;
   }).join("");
@@ -310,7 +310,7 @@ function masalarRenderle(masalar, kategoriler) {
   });
 }
 
-function masaKartiHtml(masa) {
+function masaKartiHtml(masa, katAd = "") {
   let icerik = "";
   if (masa.aktif) {
     if (masa.sureli && masa.acilisSaati) {
@@ -324,10 +324,21 @@ function masaKartiHtml(masa) {
       icerik = `<div class="masa-tutar">${paraBicimlendir(masa.toplamTutar)}</div>`;
     }
   }
+
+  let ikon = "";
+  if (masa.sureli) {
+    ikon = `<img src="masaicon.jpg" class="masa-kart-ikon" alt="" />`;
+  } else if (katAd.toLowerCase().includes("okey")) {
+    ikon = `<img src="okeyicon.jpg" class="masa-kart-ikon" alt="" />`;
+  }
+
   return `
     <div class="masa-kart${masa.aktif ? " aktif" : ""}" data-id="${masa.id}">
-      <div class="masa-ad">${masa.ad}</div>
-      ${icerik}
+      <div class="masa-kart-icerik">
+        <div class="masa-ad">${masa.ad}</div>
+        ${icerik}
+      </div>
+      ${ikon}
     </div>
   `;
 }
@@ -587,10 +598,58 @@ async function masaGecmisiGoster(masa) {
       where("masaId", "==", masa.id)
     ));
     const bugunMs = bugunBaslangic().toMillis();
-    return snap.docs
+    const records = snap.docs
       .map(d => ({ id: d.id, ...d.data() }))
-      .filter(h => h.tarih && h.tarih.toMillis() >= bugunMs)
-      .sort((a, b) => b.tarih.toMillis() - a.tarih.toMillis());
+      .filter(h => h.tarih && h.tarih.toMillis() >= bugunMs);
+
+    // Kayıtları oturumId'ye göre grupla
+    const oturumMap = {};
+    records.forEach(r => {
+      const key = r.oturumId ?? r.id; // eski format için id'yi key olarak kullan
+      if (!oturumMap[key]) oturumMap[key] = [];
+      oturumMap[key].push(r);
+    });
+
+    return Object.values(oturumMap).map(kayitlar => {
+      const ilk = kayitlar[0];
+
+      // Eski format: tek kayıt, içinde urunler[] dizisi var
+      if (kayitlar.length === 1 && ilk.urunler) {
+        return {
+          _kayitIds: [ilk.id], kasaId: ilk.kasaId, tarih: ilk.tarih,
+          acilisSaati: ilk.acilisSaati, sureli: ilk.sureli,
+          sureUcret: ilk.sureUcret || 0, urunler: ilk.urunler || [],
+          urunToplam: ilk.urunToplam || 0,
+          hesaplananTutar: ilk.hesaplananTutar ?? ilk.tutar,
+          tutar: ilk.tutar,
+        };
+      }
+
+      // Yeni format: birden fazla kayıt, oturumId ile gruplandı
+      const sureKayit   = kayitlar.find(r => r.kategori === "sure");
+      const urunKayitlar = kayitlar.filter(r => r.kategori === "urun");
+      const duzeltme    = kayitlar.find(r => r.kategori === "duzeltme");
+
+      const sureUcret  = sureKayit?.tutar || 0;
+      const urunler    = urunKayitlar.map(r => ({
+        ad: r.urunAd, miktar: r.urunMiktar,
+        birimFiyat: r.urunBirimFiyat, tutar: r.tutar,
+      }));
+      const urunToplam     = urunler.reduce((t, u) => t + u.tutar, 0);
+      const hesaplananTutar = sureUcret + urunToplam;
+      const fark = duzeltme ? (duzeltme.tur === "gelir" ? duzeltme.tutar : -duzeltme.tutar) : 0;
+
+      const enSonTarih = kayitlar.reduce((en, r) =>
+        r.tarih.toMillis() > en.toMillis() ? r.tarih : en, kayitlar[0].tarih);
+
+      return {
+        _kayitIds: kayitlar.map(r => r.id),
+        kasaId: ilk.kasaId, tarih: enSonTarih,
+        acilisSaati: ilk.acilisSaati, sureli: ilk.sureli,
+        sureUcret, urunler, urunToplam, hesaplananTutar,
+        tutar: hesaplananTutar + fark,
+      };
+    }).sort((a, b) => b.tarih.toMillis() - a.tarih.toMillis());
   };
 
   const listeYenile = async () => {
@@ -660,7 +719,7 @@ async function masaGecmisiGoster(masa) {
           </div>
           <div class="gecmis-sag">
             <span class="gecmis-tutar">${paraBicimlendir(h.hesaplananTutar ?? h.tutar)}</span>
-            ${isAdmin ? `<button class="btn-gecmis-sil" data-id="${h.id}" data-kasa="${h.kasaId}" data-tutar="${h.tutar}">Sil</button>` : ""}
+            ${isAdmin ? `<button class="btn-gecmis-sil" data-ids='${JSON.stringify(h._kayitIds)}' data-kasa="${h.kasaId}" data-tutar="${h.tutar}">Sil</button>` : ""}
           </div>
         </div>
       `;
@@ -679,7 +738,8 @@ async function masaGecmisiGoster(masa) {
           const kasaSnap = await getDoc(kasaRef);
           const mevcutBakiye = kasaSnap.data()?.bakiye || 0;
           await updateDoc(kasaRef, { bakiye: Math.max(0, mevcutBakiye - parseFloat(btn.dataset.tutar)) });
-          await deleteDoc(doc(db, "kasaHareketleri", btn.dataset.id));
+          const ids = JSON.parse(btn.dataset.ids);
+          await Promise.all(ids.map(id => deleteDoc(doc(db, "kasaHareketleri", id))));
           await listeYenile();
         });
       });
@@ -794,32 +854,52 @@ async function odemeEkraniAc(masa) {
 }
 
 async function masayiKapat(masa, hesaplananTutar, alinanTutar, kasaId, aciklama, sureUcret = 0) {
-  // Ürün kayıtlarını topla, sonra sil
   const kayitSnap = await getDocs(query(collection(db, "masaKayitlari"), where("masaId", "==", masa.id)));
   const urunler = kayitSnap.docs.map(d => {
     const v = d.data();
     return { ad: v.ad, miktar: v.miktar, birimFiyat: v.birimFiyat, tutar: v.tutar };
   });
-  const urunToplam = urunler.reduce((t, u) => t + (u.tutar || 0), 0);
   await Promise.all(kayitSnap.docs.map(d => deleteDoc(doc(db, "masaKayitlari", d.id))));
 
   await updateDoc(doc(db, "masalar", masa.id), {
     aktif: false, acilisSaati: null, toplamTutar: 0,
   });
 
-  await addDoc(collection(db, "kasaHareketleri"), {
-    kasaId, tur: "gelir",
-    tutar: alinanTutar,
-    hesaplananTutar,
-    sureUcret,
-    urunToplam,
-    aciklama: aciklama || `${masa.ad} — masa ödemesi`,
-    masaId: masa.id,
-    sureli: masa.sureli || false,
+  // Her kategori ayrı kayıt — analiz için
+  const oturumId = `${masa.id}_${Date.now()}`;
+  const ortak = {
+    kasaId, masaId: masa.id, tur: "gelir",
+    oturumId, sureli: masa.sureli || false,
     acilisSaati: masa.acilisSaati || null,
-    urunler,
     tarih: serverTimestamp(),
-  });
+  };
+
+  const yazilacaklar = [];
+
+  if (sureUcret > 0) {
+    yazilacaklar.push({ ...ortak, tutar: sureUcret,
+      aciklama: `${masa.ad} - Süre Ücreti`, kategori: "sure" });
+  }
+  for (const u of urunler) {
+    if ((u.tutar || 0) > 0) {
+      yazilacaklar.push({ ...ortak, tutar: u.tutar,
+        aciklama: `${masa.ad} - ${u.ad}`, kategori: "urun",
+        urunAd: u.ad, urunMiktar: u.miktar, urunBirimFiyat: u.birimFiyat });
+    }
+  }
+  if (yazilacaklar.length === 0) {
+    yazilacaklar.push({ ...ortak, tutar: alinanTutar,
+      aciklama: aciklama || `${masa.ad} - masa ödemesi`, kategori: "ozet" });
+  }
+  const fark = Math.round((alinanTutar - hesaplananTutar) * 100) / 100;
+  if (Math.abs(fark) > 0.01) {
+    yazilacaklar.push({ ...ortak, tutar: Math.abs(fark),
+      tur: fark > 0 ? "gelir" : "gider",
+      aciklama: `${masa.ad} - ${fark > 0 ? "Fazla Ödeme" : "İndirim"}`,
+      kategori: "duzeltme" });
+  }
+
+  await Promise.all(yazilacaklar.map(v => addDoc(collection(db, "kasaHareketleri"), v)));
 
   const kasaRef = doc(db, "kasalar", kasaId);
   const kasaSnap = await getDoc(kasaRef);
