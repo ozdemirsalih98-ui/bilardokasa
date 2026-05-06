@@ -4,8 +4,8 @@
 // Yeni bir firma için sadece bu bloğu güncellemek yeterlidir.
 // ============================================================
 
-import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
-import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
+import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
+import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, updatePassword, setPersistence, browserLocalPersistence, browserSessionPersistence, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, getDocs, addDoc, updateDoc, deleteDoc, collection, query, where, orderBy, onSnapshot, serverTimestamp, Timestamp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
 
 const FIREBASE_CONFIG = {
@@ -39,6 +39,7 @@ const durum = {
   sayfa: null,            // aktif sayfa adı
   timerIdler: [],         // aktif masa süre sayaçları
   snapshotTemizle: null,  // aktif Firestore gerçek zamanlı dinleyici
+  firmaAdi: "AKTEPE BİLARDO", // sistem/firma dokümanından yüklenir
 };
 
 
@@ -81,6 +82,24 @@ function elem(id) {
   return document.getElementById(id);
 }
 
+async function authHesabiniSil(kullaniciAdi, sifre) {
+  const ikApp = initializeApp(FIREBASE_CONFIG, `sil_${Date.now()}`);
+  const ikAuth = getAuth(ikApp);
+  try {
+    const kred = await signInWithEmailAndPassword(ikAuth, kuadEmaile(kullaniciAdi), sifre || "123456");
+    await kred.user.delete();
+  } catch { /* sessiz */ } finally {
+    await deleteApp(ikApp).catch(() => {});
+  }
+}
+
+function turkceTemizle(str) {
+  return str
+    .replace(/[çÇ]/g, "c").replace(/[ğĞ]/g, "g")
+    .replace(/[ıİ]/g, "i").replace(/[öÖ]/g, "o")
+    .replace(/[şŞ]/g, "s").replace(/[üÜ]/g, "u");
+}
+
 function temizleTimerlar() {
   durum.timerIdler.forEach(clearInterval);
   durum.timerIdler = [];
@@ -104,7 +123,8 @@ function modalKapat() {
 // E-posta adresi sisteme dahil değildir.
 // ============================================================
 
-async function girisYap(kullaniciAdi, sifre) {
+async function girisYap(kullaniciAdi, sifre, beniHatirla = true) {
+  await setPersistence(auth, beniHatirla ? browserLocalPersistence : browserSessionPersistence);
   await signInWithEmailAndPassword(auth, kuadEmaile(kullaniciAdi), sifre);
 }
 
@@ -163,10 +183,14 @@ function girisEkraniGoster() {
   elem("uygulama").innerHTML = `
     <div class="giris-kapsayici">
       <div class="giris-kart">
-        <h1>Bilardo Kasa</h1>
+        <h1>${durum.firmaAdi}</h1>
         <form id="giris-form">
           <input type="text" id="giris-kullanici" placeholder="Kullanıcı Adı" autocomplete="username" required />
           <input type="password" id="giris-sifre" placeholder="Şifre" autocomplete="current-password" required />
+          <label class="beni-hatirla-label">
+            <input type="checkbox" id="giris-beni-hatirla" checked />
+            Beni Hatırla
+          </label>
           <p id="giris-hata" class="hata gizli"></p>
           <button type="submit">Giriş Yap</button>
         </form>
@@ -183,7 +207,7 @@ function girisEkraniGoster() {
     btn.textContent = "Giriş yapılıyor...";
 
     try {
-      await girisYap(elem("giris-kullanici").value, elem("giris-sifre").value);
+      await girisYap(elem("giris-kullanici").value, elem("giris-sifre").value, elem("giris-beni-hatirla").checked);
     } catch {
       hataEl.textContent = "Kullanıcı adı veya şifre hatalı.";
       hataEl.classList.remove("gizli");
@@ -216,7 +240,7 @@ function layoutGoster() {
   elem("uygulama").innerHTML = `
     <div class="layout">
       <header class="ust-bar">
-        <span class="ust-bar-logo">Bilardo Kasa</span>
+        <span class="ust-bar-logo">${durum.firmaAdi}</span>
         <div class="ust-bar-sag">
           <span class="ust-bar-kullanici">${durum.kullanici.adSoyad}</span>
           <button id="cikis-btn">Çıkış</button>
@@ -235,6 +259,200 @@ function layoutGoster() {
 
 
 // ============================================================
+// 7.5 OYUNCU LAYOUT
+// Oyuncu rolüyle giriş yapıldığında admin layoutu yerine
+// sadece kendi profilini gösteren basit ekran açılır.
+// İlk girişte şifre değiştirme ve profil tamamlama akışı çalışır.
+// ============================================================
+
+function oyuncuLayoutGoster() {
+  elem("uygulama").innerHTML = `
+    <div class="layout">
+      <header class="ust-bar">
+        <span class="ust-bar-logo">${durum.firmaAdi}</span>
+        <div class="ust-bar-sag">
+          <span class="ust-bar-kullanici">${durum.kullanici.adSoyad}</span>
+          <button id="cikis-btn">Çıkış</button>
+        </div>
+      </header>
+      <main class="ana-icerik" style="padding-bottom:24px">
+        <div id="sayfa-icerigi"><p class="bos-mesaj">Yükleniyor...</p></div>
+      </main>
+    </div>
+  `;
+  elem("cikis-btn").addEventListener("click", cikisYap);
+
+  if (durum.kullanici.ilkGiris) {
+    sifreDegistirModalAc(true);
+  } else {
+    profilEksikKontrol();
+  }
+}
+
+async function sifreDegistirModalAc(zorunlu = false) {
+  elem("sifre-modal")?.remove();
+  const modal = document.createElement("div");
+  modal.id = "sifre-modal";
+  modal.className = "modal-arka-plan";
+  modal.innerHTML = `
+    <div class="modal-kutu">
+      <h3>${zorunlu ? "Şifrenizi Değiştirin" : "Şifre Değiştir"}</h3>
+      ${zorunlu ? `<p class="profil-aciklama">İlk girişiniz. Güvenliğiniz için lütfen şifrenizi değiştirin.</p>` : ""}
+      <form id="sifre-form">
+        <input type="password" id="sifre-yeni" placeholder="Yeni Şifre (en az 6 karakter)" minlength="6" required />
+        <input type="password" id="sifre-tekrar" placeholder="Şifreyi Tekrar Girin" required />
+        <p id="sifre-hata" class="hata gizli"></p>
+        <div class="modal-butonlar">
+          <button type="submit" class="btn-birincil">Kaydet</button>
+          ${!zorunlu ? `<button type="button" id="btn-sifre-iptal" class="btn-iptal">İptal</button>` : ""}
+        </div>
+      </form>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  if (!zorunlu) {
+    modal.addEventListener("click", e => { if (e.target === modal) modal.remove(); });
+    elem("btn-sifre-iptal")?.addEventListener("click", () => modal.remove());
+  }
+
+  elem("sifre-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const hataEl = elem("sifre-hata");
+    hataEl.classList.add("gizli");
+    const yeni = elem("sifre-yeni").value;
+    const tekrar = elem("sifre-tekrar").value;
+    if (yeni !== tekrar) {
+      hataEl.textContent = "Şifreler eşleşmiyor.";
+      hataEl.classList.remove("gizli");
+      return;
+    }
+    const btn = e.target.querySelector("[type='submit']");
+    btn.disabled = true;
+    try {
+      await updatePassword(auth.currentUser, yeni);
+      await updateDoc(doc(db, "kullanicilar", durum.kullanici.uid), { ilkGiris: false, sifre: yeni });
+      durum.kullanici.ilkGiris = false;
+      modal.remove();
+      profilEksikKontrol();
+    } catch (err) {
+      hataEl.textContent = err.code === "auth/requires-recent-login"
+        ? "Yeniden giriş yapmanız gerekiyor."
+        : "Hata: " + err.message;
+      hataEl.classList.remove("gizli");
+      btn.disabled = false;
+    }
+  });
+}
+
+function profilEksikKontrol() {
+  const eksik = !durum.kullanici.tel || !durum.kullanici.email;
+  if (eksik) {
+    profilTamamlaModalAc();
+  } else {
+    oyuncuProfilGoster();
+  }
+}
+
+function profilTamamlaModalAc() {
+  elem("profil-tamamla-modal")?.remove();
+  const modal = document.createElement("div");
+  modal.id = "profil-tamamla-modal";
+  modal.className = "modal-arka-plan";
+  modal.innerHTML = `
+    <div class="modal-kutu">
+      <h3>Profilinizi Tamamlayın</h3>
+      <p class="profil-aciklama">İletişim bilgilerinizi girerek profilinizi tamamlayın.</p>
+      <form id="profil-form">
+        <input type="tel" id="profil-tel" placeholder="Telefon" value="${durum.kullanici.tel || ""}" required />
+        <input type="email" id="profil-email" placeholder="E-posta (isteğe bağlı)" value="${durum.kullanici.email || ""}" />
+        <p id="profil-hata" class="hata gizli"></p>
+        <div class="modal-butonlar">
+          <button type="submit" class="btn-birincil">Kaydet</button>
+          <button type="button" id="btn-profil-atla" class="btn-iptal">Şimdi Değil</button>
+        </div>
+      </form>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  elem("btn-profil-atla").addEventListener("click", () => { modal.remove(); oyuncuProfilGoster(); });
+
+  elem("profil-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const tel = elem("profil-tel").value.trim();
+    const email = elem("profil-email").value.trim();
+    const btn = e.target.querySelector("[type='submit']");
+    btn.disabled = true;
+    try {
+      await updateDoc(doc(db, "kullanicilar", durum.kullanici.uid), { tel, email });
+      durum.kullanici.tel = tel;
+      durum.kullanici.email = email;
+      modal.remove();
+      oyuncuProfilGoster();
+    } catch (err) {
+      elem("profil-hata").textContent = "Hata: " + err.message;
+      elem("profil-hata").classList.remove("gizli");
+      btn.disabled = false;
+    }
+  });
+}
+
+function oyuncuProfilGoster() {
+  const k = durum.kullanici;
+  const icerik = elem("sayfa-icerigi");
+  if (!icerik) return;
+
+  icerik.innerHTML = `
+    <div class="sayfa-baslik"><h2>Profilim</h2></div>
+    <div class="oyuncu-profil-kart">
+      <div class="oyuncu-profil-baslik">
+        <div class="oyuncu-ad-buyuk">${k.adSoyad}</div>
+        <span class="oyuncu-tip-badge ${k.tip === "bilardo" ? "badge-bilardo" : "badge-genel"}">${k.tip === "bilardo" ? "Bilardo" : "Genel"}</span>
+      </div>
+      <div class="oyuncu-profil-bilgi">
+        <div class="profil-satir"><span>Kullanıcı Adı</span><span>@${k.kullaniciAdi}</span></div>
+        <div class="profil-satir"><span>Telefon</span><span>${k.tel || "—"}</span></div>
+        <div class="profil-satir"><span>E-posta</span><span>${k.email || "—"}</span></div>
+        <div class="profil-satir"><span>Veresiye Bakiyesi</span><span class="${(k.veresiye || 0) > 0 ? "negatif" : "pozitif"}">${paraBicimlendir(k.veresiye || 0)}</span></div>
+      </div>
+      ${k.tip === "bilardo" ? `
+      <div class="oyuncu-istatistik">
+        <div class="istatistik-baslik">İstatistikler</div>
+        <div class="istatistik-grid">
+          <div class="istatistik-kutu">
+            <div class="ist-deger">${(k.genelAvg || 0).toFixed(3)}</div>
+            <div class="ist-etiket">Genel Avg</div>
+          </div>
+          <div class="istatistik-kutu">
+            <div class="ist-deger">${(k.enYuksekAvg || 0).toFixed(3)}</div>
+            <div class="ist-etiket">En Yüksek Avg</div>
+          </div>
+          <div class="istatistik-kutu">
+            <div class="ist-deger">${k.eys1 || 0}</div>
+            <div class="ist-etiket">EYS 1</div>
+          </div>
+          <div class="istatistik-kutu">
+            <div class="ist-deger">${k.eys2 || 0}</div>
+            <div class="ist-etiket">EYS 2</div>
+          </div>
+          <div class="istatistik-kutu">
+            <div class="ist-deger">${k.toplamPuan || 0}</div>
+            <div class="ist-etiket">Toplam Puan</div>
+          </div>
+        </div>
+      </div>` : ""}
+      <div class="profil-buton-grup">
+        <button id="btn-profil-duzenle" class="btn-ikincil">Bilgileri Düzenle</button>
+        <button id="btn-sifre-degistir" class="btn-ikincil">Şifre Değiştir</button>
+      </div>
+    </div>
+  `;
+
+  elem("btn-profil-duzenle").addEventListener("click", profilTamamlaModalAc);
+  elem("btn-sifre-degistir").addEventListener("click", () => sifreDegistirModalAc(false));
+}
+
+
+// ============================================================
 // 8. MASALAR SAYFASI
 // Masaları kategoriye göre gruplar; süreli kategoriler üstte,
 // süresiz altta. Her kategoride aktif masalar öne çekilir.
@@ -242,10 +460,78 @@ function layoutGoster() {
 // ============================================================
 
 function masalarSayfasi(kapsayici) {
+  const bugunStr = (() => {
+    const now = new Date();
+    if (now.getHours() < 6) now.setDate(now.getDate() - 1);
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    const d = String(now.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  })();
+
   kapsayici.innerHTML = `
     <div class="sayfa-baslik"><h2>Masalar</h2></div>
     <div id="masalar-grid">Yükleniyor...</div>
+    <div class="rapor-bolumu">
+      <div class="rapor-baslik-satir">
+        <h3>Rapor</h3>
+        <div class="rapor-tarih-bant">
+          <input type="date" id="rapor-bas" value="${bugunStr}" />
+          <span class="rapor-tarih-ayrac">–</span>
+          <input type="date" id="rapor-bit" value="${bugunStr}" />
+          <button id="rapor-goster-btn" class="btn-birincil btn-kucuk">Göster</button>
+        </div>
+      </div>
+      <div id="rapor-icerik"><p class="bos-mesaj">Yükleniyor...</p></div>
+    </div>
   `;
+
+  async function raporGoster() {
+    const icerik = elem("rapor-icerik");
+    if (!icerik) return;
+    icerik.innerHTML = `<p class="bos-mesaj">Yükleniyor...</p>`;
+
+    const basStr = elem("rapor-bas").value;
+    const bitStr = elem("rapor-bit").value;
+    if (!basStr || !bitStr) { icerik.innerHTML = `<p class="bos-mesaj">Tarih seçiniz.</p>`; return; }
+
+    const [basY, basM, basG] = basStr.split("-").map(Number);
+    const [bitY, bitM, bitG] = bitStr.split("-").map(Number);
+    const basTarih = new Date(basY, basM - 1, basG, 6, 0, 0, 0);
+    const bitTarih = new Date(bitY, bitM - 1, bitG + 1, 6, 0, 0, 0);
+
+    const snap = await getDocs(collection(db, "kasaHareketleri"));
+    const filtreli = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(r => {
+        if (!r.tarih) return false;
+        const t = r.tarih.toDate();
+        return t >= basTarih && t < bitTarih;
+      });
+
+    const sureli  = filtreli.filter(r => r.sureli === true);
+    const suresiz = filtreli.filter(r => r.sureli === false);
+
+    icerik.innerHTML = `
+      <div class="rapor-kartlar">
+        <div class="rapor-kart">
+          <div class="rapor-kart-baslik">Süreli Masalar</div>
+          ${raporVeriRenderle(sureli)}
+        </div>
+        <div class="rapor-kart">
+          <div class="rapor-kart-baslik">Süresiz Masalar</div>
+          ${raporVeriRenderle(suresiz)}
+        </div>
+        <div class="rapor-kart rapor-kart-genel">
+          <div class="rapor-kart-baslik">Genel Toplam</div>
+          ${raporVeriRenderle(filtreli)}
+        </div>
+      </div>
+    `;
+  }
+
+  elem("rapor-goster-btn").addEventListener("click", raporGoster);
+  raporGoster();
 
   const masaQ = query(collection(db, "masalar"), orderBy("sira"));
   durum.snapshotTemizle = onSnapshot(masaQ, async (snap) => {
@@ -254,6 +540,63 @@ function masalarSayfasi(kapsayici) {
     const kategoriler = katSnap.docs.map(d => ({ id: d.id, ...d.data() }));
     masalarRenderle(masalar, kategoriler);
   });
+}
+
+function raporVeriRenderle(kayitlar) {
+  if (kayitlar.length === 0) return `<p class="bos-mesaj">Bu tarihte kayıt yok.</p>`;
+
+  const urunler = {};
+  let saatUcreti = 0;
+  let duzeltme = 0;
+
+  kayitlar.forEach(r => {
+    if (r.kategori === "sure") {
+      saatUcreti += (r.tutar || 0);
+    } else if (r.kategori === "urun") {
+      const ad = r.urunAd || "Bilinmeyen";
+      if (!urunler[ad]) urunler[ad] = { miktar: 0, tutar: 0 };
+      urunler[ad].miktar += (r.urunMiktar || 1);
+      urunler[ad].tutar += (r.tutar || 0);
+    } else if (r.kategori === "duzeltme") {
+      duzeltme += (r.tutar || 0);
+    } else if (!r.kategori) {
+      // Eski format: tek kayıtta urunler[] dizisi ve sureUcret
+      saatUcreti += (r.sureUcret || 0);
+      (r.urunler || []).forEach(u => {
+        const ad = u.ad || "Bilinmeyen";
+        if (!urunler[ad]) urunler[ad] = { miktar: 0, tutar: 0 };
+        urunler[ad].miktar += (u.miktar || 1);
+        urunler[ad].tutar += ((u.miktar || 1) * (u.birimFiyat || 0));
+      });
+    }
+  });
+
+  let satirlar = [];
+  let toplam = 0;
+
+  if (saatUcreti > 0) {
+    satirlar.push(`<div class="rapor-satir"><span>Saat Ücreti</span><span>${paraBicimlendir(saatUcreti)}</span></div>`);
+    toplam += saatUcreti;
+  }
+
+  Object.entries(urunler)
+    .sort((a, b) => b[1].tutar - a[1].tutar)
+    .forEach(([ad, v]) => {
+      satirlar.push(`<div class="rapor-satir"><span>${v.miktar}x ${ad}</span><span>${paraBicimlendir(v.tutar)}</span></div>`);
+      toplam += v.tutar;
+    });
+
+  if (duzeltme !== 0) {
+    satirlar.push(`<div class="rapor-satir rapor-duzeltme"><span>Düzeltme</span><span class="${duzeltme < 0 ? "negatif" : ""}">${paraBicimlendir(duzeltme)}</span></div>`);
+    toplam += duzeltme;
+  }
+
+  if (satirlar.length === 0) return `<p class="bos-mesaj">Bu tarihte kayıt yok.</p>`;
+
+  return `
+    ${satirlar.join("")}
+    <div class="rapor-toplam"><span>Toplam</span><span>${paraBicimlendir(toplam)}</span></div>
+  `;
 }
 
 function masalarRenderle(masalar, kategoriler) {
@@ -591,16 +934,26 @@ async function masaAc(masa) {
 async function masaGecmisiGoster(masa) {
   elem("gecmis-modal")?.remove();
   const isAdmin = durum.kullanici?.rol === "admin";
+  let filtre = "bugun";
 
   const hareketleriYukle = async () => {
     const snap = await getDocs(query(
       collection(db, "kasaHareketleri"),
       where("masaId", "==", masa.id)
     ));
-    const bugunMs = bugunBaslangic().toMillis();
+    let basTarihMs;
+    if (filtre === "son7") {
+      const d = new Date();
+      if (d.getHours() < 6) d.setDate(d.getDate() - 1);
+      d.setDate(d.getDate() - 6);
+      d.setHours(6, 0, 0, 0);
+      basTarihMs = d.getTime();
+    } else {
+      basTarihMs = bugunBaslangic().toMillis();
+    }
     const records = snap.docs
       .map(d => ({ id: d.id, ...d.data() }))
-      .filter(h => h.tarih && h.tarih.toMillis() >= bugunMs);
+      .filter(h => h.tarih && h.tarih.toMillis() >= basTarihMs);
 
     // Kayıtları oturumId'ye göre grupla
     const oturumMap = {};
@@ -752,6 +1105,11 @@ async function masaGecmisiGoster(masa) {
   modal.innerHTML = `
     <div class="modal-kutu">
       <h3>${masa.ad} — Geçmiş</h3>
+      ${isAdmin ? `
+      <div class="gecmis-filtre-bant">
+        <button class="gecmis-filtre-btn aktif" data-filtre="bugun">Bugün</button>
+        <button class="gecmis-filtre-btn" data-filtre="son7">Son 7 Gün</button>
+      </div>` : ""}
       <div class="gecmis-liste" id="gecmis-liste-icerik">Yükleniyor...</div>
       <div class="modal-butonlar" style="margin-top:16px">
         <button id="btn-gecmis-kapat" class="btn-iptal">Kapat</button>
@@ -761,6 +1119,16 @@ async function masaGecmisiGoster(masa) {
   document.body.appendChild(modal);
   modal.addEventListener("click", e => { if (e.target === modal) modal.remove(); });
   elem("btn-gecmis-kapat").addEventListener("click", () => modal.remove());
+
+  if (isAdmin) {
+    modal.querySelectorAll(".gecmis-filtre-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        filtre = btn.dataset.filtre;
+        modal.querySelectorAll(".gecmis-filtre-btn").forEach(b => b.classList.toggle("aktif", b === btn));
+        listeYenile();
+      });
+    });
+  }
 
   await listeYenile();
 }
@@ -1068,11 +1436,274 @@ async function kasaDetayAc(kapsayici, kasa) {
 // Yapım aşamasında.
 // ============================================================
 
-function oyuncularSayfasi(kapsayici) {
+async function oyuncularSayfasi(kapsayici) {
+  const isAdmin = durum.kullanici?.rol === "admin";
+
   kapsayici.innerHTML = `
-    <div class="sayfa-baslik"><h2>Oyuncular</h2></div>
-    <p class="bos-mesaj">Bu bölüm yapım aşamasındadır.</p>
+    <div class="sayfa-baslik">
+      <h2>Oyuncular</h2>
+      ${isAdmin ? `<button id="btn-oyuncu-ekle-ac" class="btn-birincil btn-kucuk">+ Oyuncu Ekle</button>` : ""}
+    </div>
+    <div id="oyuncu-listesi">Yükleniyor...</div>
   `;
+
+  oyuncuListesiYukle();
+
+  if (isAdmin) {
+    elem("btn-oyuncu-ekle-ac").addEventListener("click", oyuncuEkleModalAc);
+  }
+}
+
+function oyuncuEkleModalAc() {
+  elem("oyuncu-ekle-modal")?.remove();
+  const modal = document.createElement("div");
+  modal.id = "oyuncu-ekle-modal";
+  modal.className = "modal-arka-plan";
+  modal.innerHTML = `
+    <div class="modal-kutu">
+      <h3>Yeni Oyuncu Ekle</h3>
+      <input type="text" id="oyuncu-ad" placeholder="İSİM SOYİSİM" style="text-transform:uppercase" />
+      <input type="text" id="oyuncu-kullanici" placeholder="Kullanıcı Adı" autocomplete="off" />
+      <select id="oyuncu-tip">
+        <option value="bilardo">Bilardo</option>
+        <option value="genel">Genel</option>
+      </select>
+      <p class="profil-aciklama">Varsayılan şifre: <strong>123456</strong> — Oyuncu ilk girişte değiştirir.</p>
+      <p id="oyuncu-hata" class="hata gizli"></p>
+      <div class="modal-butonlar">
+        <button id="btn-oyuncu-ekle" class="btn-birincil">Ekle</button>
+        <button id="btn-oyuncu-ekle-iptal" class="btn-iptal">İptal</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  modal.addEventListener("click", e => { if (e.target === modal) modal.remove(); });
+  elem("btn-oyuncu-ekle-iptal").addEventListener("click", () => modal.remove());
+
+  elem("oyuncu-ad").addEventListener("input", function() {
+    const s = this.selectionStart, e = this.selectionEnd;
+    this.value = this.value.toUpperCase();
+    this.setSelectionRange(s, e);
+  });
+
+  let kullaniciManuel = false;
+  elem("oyuncu-kullanici").addEventListener("input", () => { kullaniciManuel = true; });
+  elem("oyuncu-ad").addEventListener("input", () => {
+    if (kullaniciManuel) return;
+    const deger = elem("oyuncu-ad").value;
+    if (!deger.includes(" ")) return;
+    const parcalar = deger.split(/\s+/).filter(p => p);
+    if (!parcalar[0]) return;
+    const oneri = turkceTemizle(parcalar[0][0] + parcalar.slice(1).join(""))
+      .toLowerCase().replace(/[^a-z0-9]/g, "");
+    elem("oyuncu-kullanici").value = oneri;
+  });
+
+  elem("btn-oyuncu-ekle").addEventListener("click", async () => {
+    const hataEl = elem("oyuncu-hata");
+    hataEl.classList.add("gizli");
+    const adSoyad = elem("oyuncu-ad").value.trim();
+    const kullaniciAdi = elem("oyuncu-kullanici").value.trim().toLowerCase();
+
+    if (!adSoyad || !kullaniciAdi) {
+      hataEl.textContent = "İsim soyisim ve kullanıcı adı gerekli.";
+      hataEl.classList.remove("gizli");
+      return;
+    }
+
+    const btn = elem("btn-oyuncu-ekle");
+    btn.disabled = true;
+    const kaydet = async () => {
+      const ikincilApp = initializeApp(FIREBASE_CONFIG, `ikincil_${Date.now()}`);
+      const ikincilAuth = getAuth(ikincilApp);
+      let uid;
+      try {
+        const kred = await createUserWithEmailAndPassword(ikincilAuth, kuadEmaile(kullaniciAdi), "123456");
+        uid = kred.user.uid;
+      } finally {
+        await deleteApp(ikincilApp).catch(() => {});
+      }
+      await setDoc(doc(db, "kullanicilar", uid), {
+        kullaniciAdi, adSoyad,
+        tip: elem("oyuncu-tip").value,
+        rol: "oyuncu",
+        tel: "", email: "",
+        genelAvg: 0, enYuksekAvg: 0,
+        eys1: 0, eys2: 0, toplamPuan: 0,
+        veresiye: 0, ilkGiris: true, sifre: "123456",
+      });
+    };
+
+    try {
+      await kaydet();
+      modal.remove();
+      oyuncuListesiYukle();
+    } catch (err) {
+      if (err.code === "auth/email-already-in-use") {
+        await authHesabiniSil(kullaniciAdi, "123456");
+        try {
+          await kaydet();
+          modal.remove();
+          oyuncuListesiYukle();
+          return;
+        } catch (err2) {
+          hataEl.textContent = err2.code === "auth/email-already-in-use"
+            ? "Bu kullanıcı adı Firebase'de kayıtlı. Console'dan silin."
+            : "Hata: " + err2.message;
+        }
+      } else {
+        hataEl.textContent = "Hata: " + err.message;
+      }
+      hataEl.classList.remove("gizli");
+      btn.disabled = false;
+    }
+  });
+}
+
+async function oyuncuListesiYukle() {
+  const el = elem("oyuncu-listesi");
+  if (!el) return;
+  const isAdmin = durum.kullanici?.rol === "admin";
+
+  const snap = await getDocs(query(collection(db, "kullanicilar"), where("rol", "==", "oyuncu")));
+  const oyuncular = snap.docs
+    .map(d => ({ id: d.id, ...d.data() }))
+    .sort((a, b) => (a.adSoyad || "").localeCompare(b.adSoyad || "", "tr"));
+
+  if (oyuncular.length === 0) {
+    el.innerHTML = `<p class="bos-mesaj">Henüz oyuncu eklenmedi.</p>`;
+    return;
+  }
+
+  el.innerHTML = `
+    <div class="oyuncu-tablo-kapsayici">
+      <table class="oyuncu-tablo">
+        <thead>
+          <tr>
+            <th>İsim Soyisim</th>
+            <th>Kullanıcı</th>
+            <th>Tip</th>
+            <th>Tel</th>
+            <th>E-posta</th>
+            <th>G.Avg</th>
+            <th>E.Y.Avg</th>
+            <th>EYS1</th>
+            <th>EYS2</th>
+            <th>Puan</th>
+            <th>Veresiye</th>
+            ${isAdmin ? `<th>İşlem</th>` : ""}
+          </tr>
+        </thead>
+        <tbody>
+          ${oyuncular.map(o => `
+            <tr>
+              <td>${o.adSoyad || "—"}</td>
+              <td>@${o.kullaniciAdi || "—"}</td>
+              <td>${o.tip === "bilardo" ? "Bilardo" : "Genel"}</td>
+              <td>${o.tel || "—"}</td>
+              <td>${o.email || "—"}</td>
+              <td>${(o.genelAvg || 0).toFixed(3)}</td>
+              <td>${(o.enYuksekAvg || 0).toFixed(3)}</td>
+              <td>${o.eys1 || 0}</td>
+              <td>${o.eys2 || 0}</td>
+              <td>${o.toplamPuan || 0}</td>
+              <td class="${(o.veresiye || 0) > 0 ? "negatif" : ""}">${paraBicimlendir(o.veresiye || 0)}</td>
+              ${isAdmin ? `<td class="oyuncu-islem-hucre">
+                <button class="btn-ikincil btn-kucuk btn-oyuncu-duzenle" data-id="${o.id}">Düzenle</button>
+                <button class="btn-sil btn-oyuncu-sil" data-id="${o.id}">Sil</button>
+              </td>` : ""}
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+
+  if (!isAdmin) return;
+
+  el.querySelectorAll(".btn-oyuncu-duzenle").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const o = oyuncular.find(x => x.id === btn.dataset.id);
+      if (o) oyuncuDuzenleModalAc(o);
+    });
+  });
+
+  el.querySelectorAll(".btn-oyuncu-sil").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const oyuncu = oyuncular.find(x => x.id === btn.dataset.id);
+      if (!oyuncu) return;
+      if (!confirm("Bu oyuncuyu silmek istediğinize emin misiniz?")) return;
+      btn.disabled = true;
+      try {
+        await deleteDoc(doc(db, "kullanicilar", btn.dataset.id));
+        authHesabiniSil(oyuncu.kullaniciAdi, oyuncu.sifre); // fire-and-forget
+        oyuncuListesiYukle();
+      } catch (err) {
+        alert("Hata: " + err.message);
+        btn.disabled = false;
+      }
+    });
+  });
+}
+
+function oyuncuDuzenleModalAc(oyuncu) {
+  elem("oyuncu-duzenle-modal")?.remove();
+  const modal = document.createElement("div");
+  modal.id = "oyuncu-duzenle-modal";
+  modal.className = "modal-arka-plan";
+  modal.innerHTML = `
+    <div class="modal-kutu">
+      <h3>${oyuncu.adSoyad} — Düzenle</h3>
+      <form id="oyuncu-duzenle-form">
+        <input type="text" id="od-adsoyad" placeholder="İsim Soyisim" value="${oyuncu.adSoyad || ""}" style="text-transform:uppercase" required />
+        <input type="text" value="@${oyuncu.kullaniciAdi || ""}" disabled class="input-readonly" title="Kullanıcı adı değiştirilemez" />
+        <select id="od-tip">
+          <option value="bilardo" ${oyuncu.tip === "bilardo" ? "selected" : ""}>Bilardo</option>
+          <option value="genel" ${oyuncu.tip === "genel" ? "selected" : ""}>Genel</option>
+        </select>
+        <input type="tel" id="od-tel" placeholder="Telefon" value="${oyuncu.tel || ""}" />
+        <input type="email" id="od-email" placeholder="E-posta (isteğe bağlı)" value="${oyuncu.email || ""}" />
+        <div class="sifre-goster-satir">
+          <input type="password" id="od-sifre" value="${oyuncu.sifre || "—"}" readonly class="input-readonly" />
+          <button type="button" id="btn-od-sifre-goster" class="btn-ikincil btn-kucuk">Göster</button>
+        </div>
+        <p id="od-hata" class="hata gizli"></p>
+        <div class="modal-butonlar">
+          <button type="submit" class="btn-birincil">Kaydet</button>
+          <button type="button" id="btn-od-iptal" class="btn-iptal">İptal</button>
+        </div>
+      </form>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  modal.addEventListener("click", e => { if (e.target === modal) modal.remove(); });
+  elem("btn-od-iptal").addEventListener("click", () => modal.remove());
+  elem("btn-od-sifre-goster").addEventListener("click", () => {
+    const inp = elem("od-sifre");
+    const gizli = inp.type === "password";
+    inp.type = gizli ? "text" : "password";
+    elem("btn-od-sifre-goster").textContent = gizli ? "Gizle" : "Göster";
+  });
+
+  elem("oyuncu-duzenle-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = e.target.querySelector("[type='submit']");
+    btn.disabled = true;
+    try {
+      await updateDoc(doc(db, "kullanicilar", oyuncu.id), {
+        adSoyad: elem("od-adsoyad").value.trim().toUpperCase(),
+        tip:     elem("od-tip").value,
+        tel:     elem("od-tel").value.trim(),
+        email:   elem("od-email").value.trim(),
+      });
+      modal.remove();
+      oyuncuListesiYukle();
+    } catch (err) {
+      elem("od-hata").textContent = "Hata: " + err.message;
+      elem("od-hata").classList.remove("gizli");
+      btn.disabled = false;
+    }
+  });
 }
 
 
@@ -1084,9 +1715,10 @@ function oyuncularSayfasi(kapsayici) {
 // ============================================================
 
 const YONETIM_MENUSU = [
-  { id: "masalar", etiket: "Masalar",  aciklama: "Masa ekle, sil, ücret güncelle" },
-  { id: "kasalar", etiket: "Kasalar",  aciklama: "Kasa ekle, sil" },
-  { id: "urunler", etiket: "Ürünler",  aciklama: "Ürün ve fiyat tanımla" },
+  { id: "masalar", etiket: "Masalar",        aciklama: "Masa ekle, sil, ücret güncelle" },
+  { id: "kasalar", etiket: "Kasalar",        aciklama: "Kasa ekle, sil" },
+  { id: "urunler", etiket: "Ürünler",        aciklama: "Ürün ve fiyat tanımla" },
+  { id: "firma",   etiket: "Firma Bilgileri", aciklama: "Firma adı ve genel ayarlar" },
 ];
 
 function yonetimSayfasi(kapsayici) {
@@ -1111,6 +1743,7 @@ function yonetimSayfasi(kapsayici) {
       if (menu === "masalar") masaYonetimi(kapsayici);
       else if (menu === "kasalar") kasaYonetimi(kapsayici);
       else if (menu === "urunler") urunYonetimi(kapsayici);
+      else if (menu === "firma")   firmaYonetimi(kapsayici);
     });
   });
 }
@@ -1432,6 +2065,54 @@ async function urunListesiYukle() {
 }
 
 
+async function firmaYonetimi(kapsayici) {
+  kapsayici.innerHTML = `
+    <div class="sayfa-baslik">
+      <button class="btn-geri" id="btn-yonetim-geri-firma">← Yönetim</button>
+      <h2>Firma Bilgileri</h2>
+    </div>
+    <div class="yonetim-form-kart">
+      <h3>Firma Adı</h3>
+      <input type="text" id="firma-ad" placeholder="Firma Adı" value="${durum.firmaAdi}" style="text-transform:uppercase" />
+      <p id="firma-hata" class="hata gizli"></p>
+      <button id="btn-firma-kaydet" class="btn-birincil">Kaydet</button>
+    </div>
+  `;
+
+  elem("firma-ad").addEventListener("input", function() {
+    const s = this.selectionStart, e = this.selectionEnd;
+    this.value = this.value.toUpperCase();
+    this.setSelectionRange(s, e);
+  });
+
+  elem("btn-yonetim-geri-firma").addEventListener("click", () => yonetimSayfasi(kapsayici));
+
+  elem("btn-firma-kaydet").addEventListener("click", async () => {
+    const hataEl = elem("firma-hata");
+    hataEl.classList.add("gizli");
+    const ad = elem("firma-ad").value.trim();
+    if (!ad) {
+      hataEl.textContent = "Firma adı boş olamaz.";
+      hataEl.classList.remove("gizli");
+      return;
+    }
+    const btn = elem("btn-firma-kaydet");
+    btn.disabled = true;
+    try {
+      await setDoc(doc(db, "sistem", "firma"), { ad }, { merge: true });
+      durum.firmaAdi = ad;
+      document.querySelectorAll(".ust-bar-logo").forEach(el => el.textContent = ad);
+      btn.textContent = "Kaydedildi ✓";
+      setTimeout(() => { btn.textContent = "Kaydet"; btn.disabled = false; }, 1500);
+    } catch (err) {
+      hataEl.textContent = "Hata: " + err.message;
+      hataEl.classList.remove("gizli");
+      btn.disabled = false;
+    }
+  });
+}
+
+
 // ============================================================
 // 18. BAŞLATICI
 // Sayfa yüklenince kimlik durumunu dinler.
@@ -1452,5 +2133,13 @@ onAuthStateChanged(auth, async (firebaseUser) => {
   }
 
   durum.kullanici = { uid: firebaseUser.uid, ...snap.data() };
-  layoutGoster();
+
+  const firmaSnap = await getDoc(doc(db, "sistem", "firma"));
+  if (firmaSnap.exists() && firmaSnap.data().ad) durum.firmaAdi = firmaSnap.data().ad;
+
+  if (durum.kullanici.rol === "oyuncu") {
+    oyuncuLayoutGoster();
+  } else {
+    layoutGoster();
+  }
 });

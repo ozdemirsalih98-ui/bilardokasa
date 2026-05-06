@@ -528,6 +528,7 @@ input[type="text"],
 input[type="password"],
 input[type="number"],
 input[type="email"],
+input[type="tel"],
 select,
 textarea {
   width: 100%;
@@ -1012,3 +1013,341 @@ label small {
 }
 
 .btn-gecmis-sil:hover:not(:disabled) { background: #fef2f2; }
+
+/* ============================================================
+   10. RAPOR BÖLÜMÜ
+   ============================================================ */
+
+.rapor-bolumu {
+  margin: 24px 0 0;
+  padding: 0 0 40px;
+}
+
+.rapor-baslik-satir {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.rapor-baslik-satir h3 {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--renk-orta);
+}
+
+.rapor-tarih-bant {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.rapor-tarih-bant input[type="date"] {
+  height: 36px;
+  padding: 0 8px;
+  border: 1px solid var(--renk-sinir);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--renk-koyu);
+  background: var(--renk-beyaz);
+}
+
+.rapor-tarih-ayrac {
+  color: var(--renk-acik);
+  font-size: 14px;
+}
+
+.rapor-kartlar {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.rapor-kart {
+  background: var(--renk-beyaz);
+  border: 1px solid var(--renk-sinir);
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+
+.rapor-kart-genel {
+  border-color: var(--renk-birincil);
+  background: var(--renk-aktif-bg);
+}
+
+.rapor-kart-baslik {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--renk-orta);
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--renk-sinir);
+}
+
+.rapor-kart-genel .rapor-kart-baslik {
+  color: var(--renk-birincil);
+}
+
+.rapor-satir {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 5px 0;
+  font-size: 14px;
+  color: var(--renk-orta);
+  border-bottom: 1px solid #f8fafc;
+}
+
+.rapor-duzeltme { color: var(--renk-negatif); }
+
+.rapor-toplam {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0 2px;
+  margin-top: 4px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--renk-pozitif);
+  border-top: 1px solid var(--renk-sinir);
+}
+
+.gecmis-filtre-bant {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.gecmis-filtre-btn {
+  flex: 1;
+  height: 34px;
+  border: 1px solid var(--renk-sinir);
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--renk-bg);
+  color: var(--renk-orta);
+  cursor: pointer;
+}
+
+.gecmis-filtre-btn.aktif {
+  background: var(--renk-birincil);
+  border-color: var(--renk-birincil);
+  color: #fff;
+}
+
+/* ============================================================
+   11. OYUNCU LAYOUT & PROFİL
+   ============================================================ */
+
+/* Giriş - Beni Hatırla */
+.beni-hatirla-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--renk-orta);
+  cursor: pointer;
+  margin: 4px 0;
+}
+.beni-hatirla-label input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; }
+
+/* Profil kartı */
+.oyuncu-profil-kart {
+  background: var(--renk-beyaz);
+  border: 1px solid var(--renk-sinir);
+  border-radius: 16px;
+  padding: 20px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.oyuncu-profil-baslik {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.oyuncu-ad-buyuk {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--renk-koyu);
+}
+
+.oyuncu-tip-badge {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 20px;
+  color: #fff;
+  white-space: nowrap;
+}
+.badge-bilardo { background: var(--renk-birincil); }
+.badge-genel   { background: var(--renk-orta); }
+
+/* Profil bilgi satırları */
+.oyuncu-profil-bilgi {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border: 1px solid var(--renk-sinir);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.profil-satir {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  font-size: 14px;
+  border-bottom: 1px solid var(--renk-sinir);
+}
+.profil-satir:last-child { border-bottom: none; }
+.profil-satir span:first-child { color: var(--renk-acik); }
+.profil-satir span:last-child  { color: var(--renk-koyu); font-weight: 500; }
+
+/* İstatistikler */
+.oyuncu-istatistik { display: flex; flex-direction: column; gap: 10px; }
+
+.istatistik-baslik {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--renk-orta);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.istatistik-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.istatistik-kutu {
+  background: var(--renk-bg);
+  border: 1px solid var(--renk-sinir);
+  border-radius: 10px;
+  padding: 10px 8px;
+  text-align: center;
+}
+
+.ist-deger {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--renk-birincil);
+  line-height: 1.2;
+}
+
+.ist-etiket {
+  font-size: 11px;
+  color: var(--renk-acik);
+  margin-top: 3px;
+}
+
+.profil-buton-grup {
+  display: flex;
+  gap: 8px;
+}
+.profil-buton-grup .btn-ikincil { flex: 1; }
+
+.profil-aciklama {
+  font-size: 13px;
+  color: var(--renk-acik);
+  margin: 2px 0 8px;
+}
+
+/* Admin düzenle modal istatistik grubu */
+.od-istatistik-baslik {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--renk-acik);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin: 4px 0 2px;
+}
+
+.od-istatistik-grup {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.od-istatistik-grup input { margin: 0; }
+
+/* Oyuncu Tablosu */
+.oyuncu-tablo-kapsayici {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin: 0 -16px;
+  padding: 0 16px 8px;
+}
+
+.oyuncu-tablo {
+  width: 100%;
+  min-width: 860px;
+  border-collapse: collapse;
+  font-size: 13px;
+  background: var(--renk-beyaz);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: var(--golge);
+}
+
+.oyuncu-tablo thead tr {
+  background: var(--renk-koyu);
+}
+
+.oyuncu-tablo th {
+  color: #fff;
+  padding: 10px 12px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  letter-spacing: 0.3px;
+}
+
+.oyuncu-tablo td {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--renk-sinir);
+  color: var(--renk-orta);
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.oyuncu-tablo tbody tr:last-child td { border-bottom: none; }
+.oyuncu-tablo tbody tr:hover td { background: var(--renk-aktif-bg); }
+
+.oyuncu-islem-hucre {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+/* Sayfa başlığına sağa yaslanmış buton */
+.sayfa-baslik {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+input.input-readonly, input:disabled {
+  background: var(--renk-bg, #f8fafc);
+  color: var(--renk-acik);
+  cursor: not-allowed;
+  opacity: 1;
+}
+
+.sifre-goster-satir {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.sifre-goster-satir input {
+  flex: 1;
+  margin: 0;
+}
