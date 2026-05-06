@@ -1466,12 +1466,16 @@ function kasaKartiHtml(kasa, hareketler) {
         <div class="kasa-kart-baslik">${kasa.ad}</div>
         <div class="kasa-bakiye">${paraBicimlendir(kasa.bakiye)}</div>
         <div class="kasa-istatistik">
-          <span class="pozitif">Tahsilat: ${paraBicimlendir(tahsilat)}</span>
+          <span class="tahsilat-renk">Tahsilat: ${paraBicimlendir(tahsilat)}</span>
           <span class="negatif">Veresiye: ${paraBicimlendir(gelir)}</span>
         </div>
       </div>
     `;
   }
+
+  const tahsilat = h.filter(x => x.tur === "tahsilat").reduce((t, x) => t + x.tutar, 0);
+  const netToplam = gelir + tahsilat - gider;
+  const netToplamClass = netToplam > 0 ? "pozitif" : netToplam < 0 ? "negatif" : "sifir";
 
   return `
     <div class="kasa-kart" data-id="${kasa.id}">
@@ -1479,8 +1483,9 @@ function kasaKartiHtml(kasa, hareketler) {
       <div class="kasa-bakiye">${paraBicimlendir(kasa.bakiye)}</div>
       <div class="kasa-istatistik">
         <span class="pozitif">Gelir: ${paraBicimlendir(gelir)}</span>
+        <span class="tahsilat-renk">Tahsilat: ${paraBicimlendir(tahsilat)}</span>
         <span class="negatif">Gider: ${paraBicimlendir(gider)}</span>
-        <span class="${netClass}">Net: ${paraBicimlendir(net)}</span>
+        <span class="${netToplamClass}">Net: ${paraBicimlendir(netToplam)}</span>
       </div>
     </div>
   `;
@@ -1561,87 +1566,115 @@ async function kasaDetayAc(kapsayici, kasa) {
          <div>${donemEtiketi} Veresiye: <strong class="negatif">${paraBicimlendir(gelir)}</strong></div>`
       : `<div>Bakiye: <strong>${paraBicimlendir(guncelBakiye)}</strong></div>
          <div>${donemEtiketi} Gelir: <strong class="pozitif">${paraBicimlendir(gelir)}</strong></div>
+         <div>${donemEtiketi} Tahsilat: <strong class="pozitif">${paraBicimlendir(tahsilat)}</strong></div>
          <div>${donemEtiketi} Gider: <strong class="negatif">${paraBicimlendir(gider)}</strong></div>`;
 
-    const turEtiket = { gelir: "Gelir", gider: "Gider", tahsilat: "Tahsilat", transfer_giris: "Transfer (+)", transfer_cikis: "Transfer (−)" };
-    const kolonSayisi = kasaVeresiye ? 6 : 5;
+    const turEtiket = kasaVeresiye
+      ? { gelir: "Veresiye", gider: "Gider", tahsilat: "Tahsilat", transfer_giris: "Transfer (+)", transfer_cikis: "Transfer (−)" }
+      : { gelir: "Gelir",    gider: "Gider", tahsilat: "Tahsilat", transfer_giris: "Transfer (+)", transfer_cikis: "Transfer (−)" };
 
     const satirlar = hareketler.length === 0
-      ? `<tr><td colspan="${kolonSayisi}" class="bos-hucre">İşlem bulunamadı</td></tr>`
+      ? `<tr><td colspan="4" class="bos-hucre">İşlem bulunamadı</td></tr>`
       : hareketler.map(h => {
           const dt = h.tarih?.toDate();
-          const tarih = dt ? dt.toLocaleDateString("tr-TR", { day: "2-digit", month: "2-digit", year: "numeric" }) : "—";
-          const saat  = dt ? dt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }) : "—";
+          const tarihSaat = dt
+            ? `${String(dt.getDate()).padStart(2,"0")}/${String(dt.getMonth()+1).padStart(2,"0")}/${String(dt.getFullYear()).slice(-2)} ${dt.toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit"})}`
+            : "—";
           const tur = turEtiket[h.tur] ?? h.tur;
-          const turClass = ["gelir", "tahsilat", "transfer_giris"].includes(h.tur) ? "pozitif" : "negatif";
+          const turClass = kasaVeresiye
+            ? (h.tur === "tahsilat" ? "tahsilat-renk" : h.tur === "gelir" ? "negatif" : "pozitif")
+            : (h.tur === "tahsilat" ? "tahsilat-renk" : ["gelir", "transfer_giris"].includes(h.tur) ? "pozitif" : "negatif");
           const aciklama = [h.aciklama, h.oyuncuAd].filter(Boolean).join(" · ");
           const silinebilir = kasaVeresiye && ["manuel_veresiye", "tahsilat"].includes(h.kategori);
-          const silBtn = silinebilir
-            ? `<button class="btn-sil-kucuk btn-hareket-sil"
-                data-id="${h.id}" data-kategori="${h.kategori}"
-                data-tutar="${h.tutar}" data-oyuncu-id="${h.oyuncuId || ''}"
-                data-hedef-kasa-id="${h.hedefKasaId || ''}"
-                data-tahsilat-id="${h.tahsilatId || ''}">✕</button>`
+          const trClass = silinebilir ? "hareket-satir silinebilir-satir" : "hareket-satir";
+          const trData  = silinebilir
+            ? `data-id="${h.id}" data-kategori="${h.kategori}" data-tutar="${h.tutar}"
+               data-oyuncu-id="${h.oyuncuId || ''}" data-hedef-kasa-id="${h.hedefKasaId || ''}"
+               data-tahsilat-id="${h.tahsilatId || ''}"`
             : "";
-          return `<tr>
-            <td>${tarih}</td><td>${saat}</td>
+          return `<tr class="${trClass}" ${trData}>
+            <td class="tarih-saat-hucre">${tarihSaat}</td>
             <td class="${turClass}">${tur}</td>
             <td>${aciklama || "—"}</td>
             <td class="sayi ${turClass}">${paraBicimlendir(h.tutar)}</td>
-            ${kasaVeresiye ? `<td class="islem-hucre">${silBtn}</td>` : ""}
           </tr>`;
         }).join("");
 
     elem("detay-icerik").innerHTML = `
       <div class="detay-ozet">${ozetHtml}</div>
       <table class="hareket-tablo">
-        <thead><tr>
-          <th>Tarih</th><th>Saat</th><th>Tür</th><th>Açıklama</th><th>Tutar</th>
-          ${kasaVeresiye ? "<th></th>" : ""}
-        </tr></thead>
+        <thead><tr><th>Tarih</th><th>Tür</th><th>Açıklama</th><th>Tutar</th></tr></thead>
         <tbody>${satirlar}</tbody>
       </table>
     `;
 
     if (kasaVeresiye) {
-      elem("detay-icerik").querySelectorAll(".btn-hareket-sil").forEach(btn => {
-        btn.addEventListener("click", async () => {
-          if (!confirm("Bu kayıt silinecek. Emin misiniz?")) return;
-          btn.disabled = true;
-          const tutar       = parseFloat(btn.dataset.tutar);
-          const kategori    = btn.dataset.kategori;
-          const oyuncuId    = btn.dataset.oyuncuId;
-          const hedefKasaId = btn.dataset.hedefKasaId;
-          const tahsilatId  = btn.dataset.tahsilatId;
-          try {
-            if (kategori === "manuel_veresiye") {
-              await Promise.all([
-                deleteDoc(doc(db, "kasaHareketleri", btn.dataset.id)),
-                updateDoc(doc(db, "kasalar", kasa.id), { bakiye: increment(-tutar) }),
-                ...(oyuncuId ? [updateDoc(doc(db, "kullanicilar", oyuncuId), { veresiye: increment(-tutar) })] : []),
-              ]);
-            } else if (kategori === "tahsilat") {
-              const ops = [
-                deleteDoc(doc(db, "kasaHareketleri", btn.dataset.id)),
-                updateDoc(doc(db, "kasalar", kasa.id), { bakiye: increment(tutar) }),
-                ...(oyuncuId ? [updateDoc(doc(db, "kullanicilar", oyuncuId), { veresiye: increment(tutar) })] : []),
-              ];
-              if (hedefKasaId && tahsilatId) {
-                const karsinSnap = await getDocs(query(
-                  collection(db, "kasaHareketleri"),
-                  where("tahsilatId", "==", tahsilatId),
-                  where("kasaId", "==", hedefKasaId)
-                ));
-                karsinSnap.docs.forEach(d => ops.push(deleteDoc(doc(db, "kasaHareketleri", d.id))));
-                ops.push(updateDoc(doc(db, "kasalar", hedefKasaId), { bakiye: increment(-tutar) }));
-              }
-              await Promise.all(ops);
-            }
-            await detayiYenile();
-          } catch (err) {
-            alert("Silme hatası: " + err.message);
-            btn.disabled = false;
+      elem("detay-icerik").querySelectorAll(".silinebilir-satir").forEach(satir => {
+        satir.addEventListener("click", () => {
+          // Zaten açık aksiyon satırı varsa kapat
+          const mevcutAksiyon = satir.nextElementSibling;
+          if (mevcutAksiyon?.classList.contains("aksiyon-satir")) {
+            mevcutAksiyon.remove();
+            satir.classList.remove("secili-satir");
+            return;
           }
+          // Diğer açık aksiyon satırlarını kapat
+          elem("detay-icerik").querySelectorAll(".aksiyon-satir").forEach(r => r.remove());
+          elem("detay-icerik").querySelectorAll(".secili-satir").forEach(r => r.classList.remove("secili-satir"));
+
+          satir.classList.add("secili-satir");
+          const aksiyonSatir = document.createElement("tr");
+          aksiyonSatir.className = "aksiyon-satir";
+          aksiyonSatir.innerHTML = `
+            <td colspan="4" class="aksiyon-hucre">
+              <span>Bu kaydı silmek istiyor musunuz?</span>
+              <button class="btn-aksiyon-sil">Evet, Sil</button>
+              <button class="btn-aksiyon-iptal">İptal</button>
+            </td>`;
+          satir.after(aksiyonSatir);
+
+          aksiyonSatir.querySelector(".btn-aksiyon-iptal").addEventListener("click", () => {
+            aksiyonSatir.remove();
+            satir.classList.remove("secili-satir");
+          });
+
+          aksiyonSatir.querySelector(".btn-aksiyon-sil").addEventListener("click", async () => {
+            const tutar       = parseFloat(satir.dataset.tutar);
+            const kategori    = satir.dataset.kategori;
+            const oyuncuId    = satir.dataset.oyuncuId;
+            const hedefKasaId = satir.dataset.hedefKasaId;
+            const tahsilatId  = satir.dataset.tahsilatId;
+            aksiyonSatir.querySelector(".btn-aksiyon-sil").disabled = true;
+            try {
+              if (kategori === "manuel_veresiye") {
+                await Promise.all([
+                  deleteDoc(doc(db, "kasaHareketleri", satir.dataset.id)),
+                  updateDoc(doc(db, "kasalar", kasa.id), { bakiye: increment(-tutar) }),
+                  ...(oyuncuId ? [updateDoc(doc(db, "kullanicilar", oyuncuId), { veresiye: increment(-tutar) })] : []),
+                ]);
+              } else if (kategori === "tahsilat") {
+                const ops = [
+                  deleteDoc(doc(db, "kasaHareketleri", satir.dataset.id)),
+                  updateDoc(doc(db, "kasalar", kasa.id), { bakiye: increment(tutar) }),
+                  ...(oyuncuId ? [updateDoc(doc(db, "kullanicilar", oyuncuId), { veresiye: increment(tutar) })] : []),
+                ];
+                if (hedefKasaId && tahsilatId) {
+                  const karsinSnap = await getDocs(query(
+                    collection(db, "kasaHareketleri"),
+                    where("tahsilatId", "==", tahsilatId),
+                    where("kasaId", "==", hedefKasaId)
+                  ));
+                  karsinSnap.docs.forEach(d => ops.push(deleteDoc(doc(db, "kasaHareketleri", d.id))));
+                  ops.push(updateDoc(doc(db, "kasalar", hedefKasaId), { bakiye: increment(-tutar) }));
+                }
+                await Promise.all(ops);
+              }
+              await detayiYenile();
+            } catch (err) {
+              alert("Silme hatası: " + err.message);
+              aksiyonSatir.querySelector(".btn-aksiyon-sil").disabled = false;
+            }
+          });
         });
       });
     }
@@ -1858,7 +1891,7 @@ async function tahsilatYapModalAc(veresiyeKasa, onSuccess) {
           hedefKasaId, tahsilatId, tarih: serverTimestamp(),
         }),
         addDoc(collection(db, "kasaHareketleri"), {
-          kasaId: hedefKasaId, tutar, tur: "gelir",
+          kasaId: hedefKasaId, tutar, tur: "tahsilat",
           aciklama: aciklama || `Veresiye Tahsilat - ${oyuncuAd}`,
           kategori: "tahsilat_giris", oyuncuId: seciliOyuncu.id, oyuncuAd,
           kaynakKasaId: veresiyeKasa.id, tahsilatId, tarih: serverTimestamp(),
