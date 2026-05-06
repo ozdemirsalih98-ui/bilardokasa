@@ -6,7 +6,7 @@
 
 import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, updatePassword, setPersistence, browserLocalPersistence, browserSessionPersistence, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
-import { getFirestore, doc, getDoc, setDoc, getDocs, addDoc, updateDoc, deleteDoc, collection, query, where, orderBy, onSnapshot, serverTimestamp, Timestamp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
+import { getFirestore, doc, getDoc, setDoc, getDocs, addDoc, updateDoc, deleteDoc, collection, query, where, orderBy, onSnapshot, serverTimestamp, Timestamp, increment } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
 
 const FIREBASE_CONFIG = {
   apiKey: "AIzaSyBlYSJbBnkL-PoPM_VH3uLDBe545awkO04",
@@ -500,8 +500,15 @@ function masalarSayfasi(kapsayici) {
     const basTarih = new Date(basY, basM - 1, basG, 6, 0, 0, 0);
     const bitTarih = new Date(bitY, bitM - 1, bitG + 1, 6, 0, 0, 0);
 
-    const snap = await getDocs(collection(db, "kasaHareketleri"));
-    const filtreli = snap.docs
+    const [hareketSnap, kasaSnap] = await Promise.all([
+      getDocs(collection(db, "kasaHareketleri")),
+      getDocs(query(collection(db, "kasalar"), orderBy("sira"))),
+    ]);
+    const kasalar = kasaSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const kasaMap = {};
+    kasalar.forEach(k => { kasaMap[k.id] = k.ad; });
+
+    const filtreli = hareketSnap.docs
       .map(d => ({ id: d.id, ...d.data() }))
       .filter(r => {
         if (!r.tarih) return false;
@@ -516,15 +523,15 @@ function masalarSayfasi(kapsayici) {
       <div class="rapor-kartlar">
         <div class="rapor-kart">
           <div class="rapor-kart-baslik">Süreli Masalar</div>
-          ${raporVeriRenderle(sureli)}
+          ${raporVeriRenderle(sureli, kasaMap)}
         </div>
         <div class="rapor-kart">
           <div class="rapor-kart-baslik">Süresiz Masalar</div>
-          ${raporVeriRenderle(suresiz)}
+          ${raporVeriRenderle(suresiz, kasaMap)}
         </div>
         <div class="rapor-kart rapor-kart-genel">
           <div class="rapor-kart-baslik">Genel Toplam</div>
-          ${raporVeriRenderle(filtreli)}
+          ${raporVeriRenderle(filtreli, kasaMap)}
         </div>
       </div>
     `;
@@ -542,7 +549,7 @@ function masalarSayfasi(kapsayici) {
   });
 }
 
-function raporVeriRenderle(kayitlar) {
+function raporVeriRenderle(kayitlar, kasaMap = {}) {
   if (kayitlar.length === 0) return `<p class="bos-mesaj">Bu tarihte kayıt yok.</p>`;
 
   const urunler = {};
@@ -593,9 +600,32 @@ function raporVeriRenderle(kayitlar) {
 
   if (satirlar.length === 0) return `<p class="bos-mesaj">Bu tarihte kayıt yok.</p>`;
 
+  // Kasa dağılımı
+  let kasaHtml = "";
+  if (Object.keys(kasaMap).length > 0) {
+    const kasaToplam = {};
+    kayitlar.forEach(r => {
+      if (!r.kasaId) return;
+      if (!kasaToplam[r.kasaId]) kasaToplam[r.kasaId] = 0;
+      kasaToplam[r.kasaId] += r.kategori === "duzeltme" && r.tur === "gider"
+        ? -(r.tutar || 0) : (r.tutar || 0);
+    });
+    const kasaSatirlar = Object.entries(kasaToplam)
+      .filter(([, t]) => t !== 0)
+      .map(([id, tutar]) =>
+        `<div class="rapor-satir rapor-kasa-satir">
+          <span>${kasaMap[id] || "—"}</span>
+          <span>${paraBicimlendir(tutar)}</span>
+        </div>`);
+    if (kasaSatirlar.length > 0) {
+      kasaHtml = `<div class="rapor-kasa-baslik">Kasa Dağılımı</div>${kasaSatirlar.join("")}`;
+    }
+  }
+
   return `
     ${satirlar.join("")}
     <div class="rapor-toplam"><span>Toplam</span><span>${paraBicimlendir(toplam)}</span></div>
+    ${kasaHtml}
   `;
 }
 
@@ -620,11 +650,7 @@ function masalarRenderle(masalar, kategoriler) {
   }
 
   grid.innerHTML = sirali.map(grup => {
-    // Aktif masalar öne
-    const masalar = [
-      ...grup.masalar.filter(m => m.aktif),
-      ...grup.masalar.filter(m => !m.aktif),
-    ];
+    const masalar = grup.masalar;
     return `
       <div class="kategori-grup">
         <h3 class="kategori-baslik">${grup.ad}</h3>
@@ -936,6 +962,10 @@ async function masaGecmisiGoster(masa) {
   const isAdmin = durum.kullanici?.rol === "admin";
   let filtre = "bugun";
 
+  const kasaSnap = await getDocs(collection(db, "kasalar"));
+  const kasaMap = {};
+  kasaSnap.docs.forEach(d => { kasaMap[d.id] = { id: d.id, ...d.data() }; });
+
   const hareketleriYukle = async () => {
     const snap = await getDocs(query(
       collection(db, "kasaHareketleri"),
@@ -970,11 +1000,15 @@ async function masaGecmisiGoster(masa) {
       if (kayitlar.length === 1 && ilk.urunler) {
         return {
           _kayitIds: [ilk.id], kasaId: ilk.kasaId, tarih: ilk.tarih,
+          kasaAd: kasaMap[ilk.kasaId]?.ad || "—",
+          kasaTip: kasaMap[ilk.kasaId]?.tip || null,
           acilisSaati: ilk.acilisSaati, sureli: ilk.sureli,
           sureUcret: ilk.sureUcret || 0, urunler: ilk.urunler || [],
           urunToplam: ilk.urunToplam || 0,
           hesaplananTutar: ilk.hesaplananTutar ?? ilk.tutar,
           tutar: ilk.tutar,
+          oyuncuId: ilk.oyuncuId || null,
+          oyuncuAd: ilk.oyuncuAd || null,
         };
       }
 
@@ -998,9 +1032,13 @@ async function masaGecmisiGoster(masa) {
       return {
         _kayitIds: kayitlar.map(r => r.id),
         kasaId: ilk.kasaId, tarih: enSonTarih,
+        kasaAd: kasaMap[ilk.kasaId]?.ad || "—",
+        kasaTip: kasaMap[ilk.kasaId]?.tip || null,
         acilisSaati: ilk.acilisSaati, sureli: ilk.sureli,
         sureUcret, urunler, urunToplam, hesaplananTutar,
         tutar: hesaplananTutar + fark,
+        oyuncuId: ilk.oyuncuId || null,
+        oyuncuAd: ilk.oyuncuAd || null,
       };
     }).sort((a, b) => b.tarih.toMillis() - a.tarih.toMillis());
   };
@@ -1035,6 +1073,10 @@ async function masaGecmisiGoster(masa) {
         }
       }
 
+      const kasaBadge = `<span class="gecmis-kasa-badge">${h.kasaAd || "—"}</span>`;
+      const oyuncuBadge = h.kasaTip === "veresiye" && h.oyuncuAd
+        ? ` <span class="gecmis-oyuncu-badge">${h.oyuncuAd}</span>` : "";
+
       // Ücret dökümü
       const satirlar = [];
       if (h.sureli && h.sureUcret > 0) {
@@ -1067,12 +1109,18 @@ async function masaGecmisiGoster(masa) {
         <div class="gecmis-satir">
           <div class="gecmis-bilgi">
             <div class="gecmis-zamanlar">${zamanSatiri}</div>
+            <div class="gecmis-meta">${kasaBadge}${oyuncuBadge}</div>
             ${dokumHtml}
             ${toplamFarki}
           </div>
           <div class="gecmis-sag">
             <span class="gecmis-tutar">${paraBicimlendir(h.hesaplananTutar ?? h.tutar)}</span>
-            ${isAdmin ? `<button class="btn-gecmis-sil" data-ids='${JSON.stringify(h._kayitIds)}' data-kasa="${h.kasaId}" data-tutar="${h.tutar}">Sil</button>` : ""}
+            ${isAdmin ? `<button class="btn-gecmis-sil"
+              data-ids='${JSON.stringify(h._kayitIds)}'
+              data-kasa="${h.kasaId}"
+              data-tutar="${h.tutar}"
+              data-oyuncu-id="${h.oyuncuId || ''}"
+              data-oyuncu-tutar="${h.hesaplananTutar ?? h.tutar}">Sil</button>` : ""}
           </div>
         </div>
       `;
@@ -1093,6 +1141,11 @@ async function masaGecmisiGoster(masa) {
           await updateDoc(kasaRef, { bakiye: Math.max(0, mevcutBakiye - parseFloat(btn.dataset.tutar)) });
           const ids = JSON.parse(btn.dataset.ids);
           await Promise.all(ids.map(id => deleteDoc(doc(db, "kasaHareketleri", id))));
+          if (btn.dataset.oyuncuId) {
+            await updateDoc(doc(db, "kullanicilar", btn.dataset.oyuncuId), {
+              veresiye: increment(-parseFloat(btn.dataset.oyuncuTutar)),
+            });
+          }
           await listeYenile();
         });
       });
@@ -1142,12 +1195,17 @@ async function masaGecmisiGoster(masa) {
 // ============================================================
 
 async function odemeEkraniAc(masa) {
-  const [kasaSnap, kayitSnap] = await Promise.all([
+  const [kasaSnap, kayitSnap, oyuncuSnap] = await Promise.all([
     getDocs(query(collection(db, "kasalar"), orderBy("sira"))),
     getDocs(query(collection(db, "masaKayitlari"), where("masaId", "==", masa.id))),
+    getDocs(collection(db, "kullanicilar")),
   ]);
   const kasalar = kasaSnap.docs.map(d => ({ id: d.id, ...d.data() }));
   const kayitlar = kayitSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+  const oyuncular = oyuncuSnap.docs
+    .filter(d => d.data().rol === "oyuncu")
+    .map(d => ({ id: d.id, ...d.data() }))
+    .sort((a, b) => (a.adSoyad || "").localeCompare(b.adSoyad || "", "tr"));
 
   const acilisMs = masa.acilisSaati ? masa.acilisSaati.toMillis() : null;
   const sureUcret = masa.sureli && acilisMs ? sureUcretiHesapla(acilisMs, masa.saatlikUcret || 0) : 0;
@@ -1166,7 +1224,7 @@ async function odemeEkraniAc(masa) {
       </div>`
     : "";
 
-  const kasaSecenekleri = kasalar.map(k => `<option value="${k.id}">${k.ad}</option>`).join("");
+  const kasaSecenekleri = kasalar.map(k => `<option value="${k.id}" data-tip="${k.tip || ""}">${k.ad}</option>`).join("");
 
   const modal = document.createElement("div");
   modal.id = "odeme-modal";
@@ -1184,6 +1242,12 @@ async function odemeEkraniAc(masa) {
         <input type="number" id="alinan-tutar" placeholder="${genelToplam.toFixed(2)}" min="0" step="0.01" />
         <label>Kasa</label>
         <select id="kasa-secimi">${kasaSecenekleri}</select>
+        <div id="oyuncu-secim-blok" class="gizli">
+          <label>Oyuncu</label>
+          <input type="text" id="oyuncu-ara" placeholder="İsim ile ara…" autocomplete="off" />
+          <div class="oyuncu-secim-liste" id="oyuncu-secim-liste"></div>
+          <div id="veresiye-ozet" class="veresiye-ozet gizli"></div>
+        </div>
         <label>Açıklama <small>(isteğe bağlı)</small></label>
         <input type="text" id="odeme-aciklama" />
         <p id="odeme-hata" class="hata gizli"></p>
@@ -1199,6 +1263,69 @@ async function odemeEkraniAc(masa) {
   modal.addEventListener("click", e => { if (e.target === modal) modal.remove(); });
   elem("btn-odeme-iptal").addEventListener("click", () => modal.remove());
 
+  let seciliOyuncu = null;
+
+  function oyuncuListesiRender(filtre) {
+    const liste = elem("oyuncu-secim-liste");
+    const aramaKucuk = (filtre || "").toLowerCase();
+    const gorunenler = oyuncular.filter(o =>
+      !aramaKucuk || (o.adSoyad || "").toLowerCase().includes(aramaKucuk)
+    );
+    liste.innerHTML = gorunenler.length
+      ? gorunenler.map(o => `
+          <div class="oyuncu-secim-satir${seciliOyuncu?.id === o.id ? " secili" : ""}" data-id="${o.id}">
+            <span class="oyss-ad">${o.adSoyad || o.kullaniciAdi}</span>
+            <span class="oyss-bakiye${(o.veresiye || 0) > 0 ? " negatif" : ""}">${paraBicimlendir(o.veresiye || 0)}</span>
+          </div>`).join("")
+      : `<p class="bos-mesaj">Oyuncu bulunamadı.</p>`;
+
+    liste.querySelectorAll(".oyuncu-secim-satir").forEach(satir => {
+      satir.addEventListener("click", () => {
+        seciliOyuncu = oyuncular.find(o => o.id === satir.dataset.id) || null;
+        oyuncuListesiRender(elem("oyuncu-ara").value);
+        veresiyeOzetGuncelle();
+      });
+    });
+  }
+
+  function veresiyeOzetGuncelle() {
+    const ozetEl = elem("veresiye-ozet");
+    if (!seciliOyuncu) { ozetEl.classList.add("gizli"); return; }
+    const mevcut = seciliOyuncu.veresiye || 0;
+    const yeni = mevcut + genelToplam;
+    ozetEl.classList.remove("gizli");
+    ozetEl.innerHTML = `
+      <div class="veresiye-ozet-satir">
+        <span>Mevcut Bakiye</span>
+        <span class="${mevcut > 0 ? "negatif" : ""}">${paraBicimlendir(mevcut)}</span>
+      </div>
+      <div class="veresiye-ozet-satir">
+        <span>Bu İşlem</span>
+        <span class="negatif">+${paraBicimlendir(genelToplam)}</span>
+      </div>
+      <div class="veresiye-ozet-satir veresiye-ozet-toplam">
+        <span>Yeni Bakiye</span>
+        <span class="negatif">${paraBicimlendir(yeni)}</span>
+      </div>`;
+  }
+
+  function kasaDegistiKontrol() {
+    const select = elem("kasa-secimi");
+    const tip = select.options[select.selectedIndex]?.dataset.tip;
+    const blok = elem("oyuncu-secim-blok");
+    if (tip === "veresiye") {
+      blok.classList.remove("gizli");
+      oyuncuListesiRender(elem("oyuncu-ara").value);
+    } else {
+      blok.classList.add("gizli");
+      seciliOyuncu = null;
+    }
+  }
+
+  elem("kasa-secimi").addEventListener("change", kasaDegistiKontrol);
+  elem("oyuncu-ara").addEventListener("input", () => oyuncuListesiRender(elem("oyuncu-ara").value));
+  kasaDegistiKontrol();
+
   elem("odeme-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const hataEl = elem("odeme-hata");
@@ -1206,12 +1333,26 @@ async function odemeEkraniAc(masa) {
     const alinanRaw = elem("alinan-tutar").value;
     const alinanTutar = alinanRaw ? parseFloat(alinanRaw) : genelToplam;
     const kasaId = elem("kasa-secimi").value;
+    const kasaTip = elem("kasa-secimi").options[elem("kasa-secimi").selectedIndex]?.dataset.tip;
     const aciklama = elem("odeme-aciklama").value.trim();
     const btn = e.target.querySelector("[type='submit']");
-    btn.disabled = true;
 
+    if (kasaTip === "veresiye" && !seciliOyuncu) {
+      hataEl.textContent = "Veresiye için lütfen bir oyuncu seçin.";
+      hataEl.classList.remove("gizli");
+      return;
+    }
+
+    btn.disabled = true;
     try {
-      await masayiKapat(masa, genelToplam, alinanTutar, kasaId, aciklama, sureUcret);
+      await masayiKapat(masa, genelToplam, alinanTutar, kasaId, aciklama, sureUcret,
+        kasaTip === "veresiye" ? seciliOyuncu.id : null,
+        kasaTip === "veresiye" ? (seciliOyuncu.adSoyad || seciliOyuncu.kullaniciAdi) : null);
+      if (kasaTip === "veresiye" && seciliOyuncu) {
+        await updateDoc(doc(db, "kullanicilar", seciliOyuncu.id), {
+          veresiye: increment(genelToplam),
+        });
+      }
       modal.remove();
     } catch (err) {
       hataEl.textContent = "Hata: " + err.message;
@@ -1221,7 +1362,7 @@ async function odemeEkraniAc(masa) {
   });
 }
 
-async function masayiKapat(masa, hesaplananTutar, alinanTutar, kasaId, aciklama, sureUcret = 0) {
+async function masayiKapat(masa, hesaplananTutar, alinanTutar, kasaId, aciklama, sureUcret = 0, oyuncuId = null, oyuncuAd = null) {
   const kayitSnap = await getDocs(query(collection(db, "masaKayitlari"), where("masaId", "==", masa.id)));
   const urunler = kayitSnap.docs.map(d => {
     const v = d.data();
@@ -1240,6 +1381,7 @@ async function masayiKapat(masa, hesaplananTutar, alinanTutar, kasaId, aciklama,
     oturumId, sureli: masa.sureli || false,
     acilisSaati: masa.acilisSaati || null,
     tarih: serverTimestamp(),
+    ...(oyuncuId ? { oyuncuId, oyuncuAd } : {}),
   };
 
   const yazilacaklar = [];
@@ -1352,53 +1494,506 @@ function kasaKartiHtml(kasa, hareketler) {
 // ============================================================
 
 async function kasaDetayAc(kapsayici, kasa) {
+  const kasaIslemleri = kasa.tip !== "veresiye";
+  const kasaVeresiye  = kasa.tip === "veresiye";
+  let filtre = "bugun";
+
   kapsayici.innerHTML = `
     <div class="sayfa-baslik">
       <button id="btn-geri" class="btn-geri">← Kasalar</button>
       <h2>${kasa.ad}</h2>
     </div>
+    ${kasaIslemleri ? `
+    <div class="kasa-islem-butonlar">
+      <button class="btn-birincil btn-kucuk" id="btn-gelir-ekle">+ Gelir</button>
+      <button class="btn-ikincil btn-kucuk" id="btn-gider-ekle">− Gider</button>
+      <button class="btn-ikincil btn-kucuk" id="btn-transfer">⇄ Transfer</button>
+    </div>` : ""}
+    ${kasaVeresiye ? `
+    <div class="kasa-islem-butonlar">
+      <button class="btn-birincil btn-kucuk" id="btn-veresiye-giris">+ Veresiye Girişi</button>
+      <button class="btn-ikincil btn-kucuk" id="btn-tahsilat">✓ Tahsilat Yap</button>
+    </div>` : ""}
+    <div class="gecmis-filtre-bant">
+      <button class="gecmis-filtre-btn aktif" data-filtre="bugun">Bugün</button>
+      <button class="gecmis-filtre-btn" data-filtre="son7">Son 7 Gün</button>
+      <button class="gecmis-filtre-btn" data-filtre="son30">Son 30 Gün</button>
+    </div>
     <div id="detay-icerik">Yükleniyor...</div>
   `;
   elem("btn-geri").addEventListener("click", () => kasalarSayfasi(kapsayici));
 
-  const snap = await getDocs(query(
-    collection(db, "kasaHareketleri"),
-    where("kasaId", "==", kasa.id)
-  ));
-  const bugunMs = bugunBaslangic().toMillis();
-  const hareketler = snap.docs
+  const detayiYenile = async () => {
+    const [kasaDocSnap, hareketSnap] = await Promise.all([
+      getDoc(doc(db, "kasalar", kasa.id)),
+      getDocs(query(collection(db, "kasaHareketleri"), where("kasaId", "==", kasa.id))),
+    ]);
+    const guncelBakiye = kasaDocSnap.data()?.bakiye ?? kasa.bakiye;
+
+    let basTarihMs;
+    if (filtre === "son7") {
+      const d = new Date();
+      if (d.getHours() < 6) d.setDate(d.getDate() - 1);
+      d.setDate(d.getDate() - 6); d.setHours(6, 0, 0, 0);
+      basTarihMs = d.getTime();
+    } else if (filtre === "son30") {
+      const d = new Date();
+      if (d.getHours() < 6) d.setDate(d.getDate() - 1);
+      d.setDate(d.getDate() - 29); d.setHours(6, 0, 0, 0);
+      basTarihMs = d.getTime();
+    } else {
+      basTarihMs = bugunBaslangic().toMillis();
+    }
+
+    const hareketler = hareketSnap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(h => h.tarih && h.tarih.toMillis() >= basTarihMs)
+      .sort((a, b) => b.tarih.toMillis() - a.tarih.toMillis());
+
+    const gelir    = hareketler.filter(h => h.tur === "gelir").reduce((t, h) => t + h.tutar, 0);
+    const gider    = hareketler.filter(h => h.tur === "gider").reduce((t, h) => t + h.tutar, 0);
+    const tahsilat = hareketler.filter(h => h.tur === "tahsilat").reduce((t, h) => t + h.tutar, 0);
+
+    const donemEtiketi = { bugun: "Bugün", son7: "Son 7 Gün", son30: "Son 30 Gün" }[filtre] || "Bugün";
+    const ozetHtml = kasaVeresiye
+      ? `<div>Bakiye: <strong>${paraBicimlendir(guncelBakiye)}</strong></div>
+         <div>${donemEtiketi} Tahsilat: <strong class="pozitif">${paraBicimlendir(tahsilat)}</strong></div>
+         <div>${donemEtiketi} Veresiye: <strong class="negatif">${paraBicimlendir(gelir)}</strong></div>`
+      : `<div>Bakiye: <strong>${paraBicimlendir(guncelBakiye)}</strong></div>
+         <div>${donemEtiketi} Gelir: <strong class="pozitif">${paraBicimlendir(gelir)}</strong></div>
+         <div>${donemEtiketi} Gider: <strong class="negatif">${paraBicimlendir(gider)}</strong></div>`;
+
+    const turEtiket = { gelir: "Gelir", gider: "Gider", tahsilat: "Tahsilat", transfer_giris: "Transfer (+)", transfer_cikis: "Transfer (−)" };
+    const kolonSayisi = kasaVeresiye ? 6 : 5;
+
+    const satirlar = hareketler.length === 0
+      ? `<tr><td colspan="${kolonSayisi}" class="bos-hucre">İşlem bulunamadı</td></tr>`
+      : hareketler.map(h => {
+          const dt = h.tarih?.toDate();
+          const tarih = dt ? dt.toLocaleDateString("tr-TR", { day: "2-digit", month: "2-digit", year: "numeric" }) : "—";
+          const saat  = dt ? dt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }) : "—";
+          const tur = turEtiket[h.tur] ?? h.tur;
+          const turClass = ["gelir", "tahsilat", "transfer_giris"].includes(h.tur) ? "pozitif" : "negatif";
+          const aciklama = [h.aciklama, h.oyuncuAd].filter(Boolean).join(" · ");
+          const silinebilir = kasaVeresiye && ["manuel_veresiye", "tahsilat"].includes(h.kategori);
+          const silBtn = silinebilir
+            ? `<button class="btn-sil-kucuk btn-hareket-sil"
+                data-id="${h.id}" data-kategori="${h.kategori}"
+                data-tutar="${h.tutar}" data-oyuncu-id="${h.oyuncuId || ''}"
+                data-hedef-kasa-id="${h.hedefKasaId || ''}"
+                data-tahsilat-id="${h.tahsilatId || ''}">✕</button>`
+            : "";
+          return `<tr>
+            <td>${tarih}</td><td>${saat}</td>
+            <td class="${turClass}">${tur}</td>
+            <td>${aciklama || "—"}</td>
+            <td class="sayi ${turClass}">${paraBicimlendir(h.tutar)}</td>
+            ${kasaVeresiye ? `<td class="islem-hucre">${silBtn}</td>` : ""}
+          </tr>`;
+        }).join("");
+
+    elem("detay-icerik").innerHTML = `
+      <div class="detay-ozet">${ozetHtml}</div>
+      <table class="hareket-tablo">
+        <thead><tr>
+          <th>Tarih</th><th>Saat</th><th>Tür</th><th>Açıklama</th><th>Tutar</th>
+          ${kasaVeresiye ? "<th></th>" : ""}
+        </tr></thead>
+        <tbody>${satirlar}</tbody>
+      </table>
+    `;
+
+    if (kasaVeresiye) {
+      elem("detay-icerik").querySelectorAll(".btn-hareket-sil").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          if (!confirm("Bu kayıt silinecek. Emin misiniz?")) return;
+          btn.disabled = true;
+          const tutar       = parseFloat(btn.dataset.tutar);
+          const kategori    = btn.dataset.kategori;
+          const oyuncuId    = btn.dataset.oyuncuId;
+          const hedefKasaId = btn.dataset.hedefKasaId;
+          const tahsilatId  = btn.dataset.tahsilatId;
+          try {
+            if (kategori === "manuel_veresiye") {
+              await Promise.all([
+                deleteDoc(doc(db, "kasaHareketleri", btn.dataset.id)),
+                updateDoc(doc(db, "kasalar", kasa.id), { bakiye: increment(-tutar) }),
+                ...(oyuncuId ? [updateDoc(doc(db, "kullanicilar", oyuncuId), { veresiye: increment(-tutar) })] : []),
+              ]);
+            } else if (kategori === "tahsilat") {
+              const ops = [
+                deleteDoc(doc(db, "kasaHareketleri", btn.dataset.id)),
+                updateDoc(doc(db, "kasalar", kasa.id), { bakiye: increment(tutar) }),
+                ...(oyuncuId ? [updateDoc(doc(db, "kullanicilar", oyuncuId), { veresiye: increment(tutar) })] : []),
+              ];
+              if (hedefKasaId && tahsilatId) {
+                const karsinSnap = await getDocs(query(
+                  collection(db, "kasaHareketleri"),
+                  where("tahsilatId", "==", tahsilatId),
+                  where("kasaId", "==", hedefKasaId)
+                ));
+                karsinSnap.docs.forEach(d => ops.push(deleteDoc(doc(db, "kasaHareketleri", d.id))));
+                ops.push(updateDoc(doc(db, "kasalar", hedefKasaId), { bakiye: increment(-tutar) }));
+              }
+              await Promise.all(ops);
+            }
+            await detayiYenile();
+          } catch (err) {
+            alert("Silme hatası: " + err.message);
+            btn.disabled = false;
+          }
+        });
+      });
+    }
+  };
+
+  kapsayici.querySelectorAll(".gecmis-filtre-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      filtre = btn.dataset.filtre;
+      kapsayici.querySelectorAll(".gecmis-filtre-btn").forEach(b => b.classList.toggle("aktif", b === btn));
+      detayiYenile();
+    });
+  });
+
+  if (kasaIslemleri) {
+    elem("btn-gelir-ekle").addEventListener("click", () => gelirGiderModalAc(kasa, "gelir", detayiYenile));
+    elem("btn-gider-ekle").addEventListener("click", () => gelirGiderModalAc(kasa, "gider", detayiYenile));
+    elem("btn-transfer").addEventListener("click", () => transferModalAc(kasa, detayiYenile));
+  }
+  if (kasaVeresiye) {
+    elem("btn-veresiye-giris").addEventListener("click", () => veresiyeGirisModalAc(kasa, detayiYenile));
+    elem("btn-tahsilat").addEventListener("click", () => tahsilatYapModalAc(kasa, detayiYenile));
+  }
+
+  await detayiYenile();
+}
+
+async function veresiyeGirisModalAc(kasa, onSuccess) {
+  const oyuncuSnap = await getDocs(collection(db, "kullanicilar"));
+  const oyuncular = oyuncuSnap.docs
+    .filter(d => d.data().rol === "oyuncu")
     .map(d => ({ id: d.id, ...d.data() }))
-    .filter(h => h.tarih && h.tarih.toMillis() >= bugunMs)
-    .sort((a, b) => b.tarih.toMillis() - a.tarih.toMillis());
+    .sort((a, b) => (a.adSoyad || "").localeCompare(b.adSoyad || "", "tr"));
 
-  const gelir = hareketler.filter(h => h.tur === "gelir").reduce((t, h) => t + h.tutar, 0);
-  const gider = hareketler.filter(h => h.tur === "gider").reduce((t, h) => t + h.tutar, 0);
-
-  const satirlar = hareketler.length === 0
-    ? `<tr><td colspan="4" class="bos-hucre">Bugün işlem yok</td></tr>`
-    : hareketler.map(h => {
-        const saat = h.tarih ? h.tarih.toDate().toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }) : "—";
-        const tur = { gelir: "Gelir", gider: "Gider", tahsilat: "Tahsilat", transfer_giris: "Transfer (+)", transfer_cikis: "Transfer (−)" }[h.tur] ?? h.tur;
-        const turClass = ["gelir", "tahsilat", "transfer_giris"].includes(h.tur) ? "pozitif" : "negatif";
-        return `<tr>
-          <td>${saat}</td>
-          <td class="${turClass}">${tur}</td>
-          <td>${h.aciklama || "—"}</td>
-          <td class="sayi ${turClass}">${paraBicimlendir(h.tutar)}</td>
-        </tr>`;
-      }).join("");
-
-  elem("detay-icerik").innerHTML = `
-    <div class="detay-ozet">
-      <div>Bakiye: <strong>${paraBicimlendir(kasa.bakiye)}</strong></div>
-      <div>Bugün Gelir: <strong class="pozitif">${paraBicimlendir(gelir)}</strong></div>
-      <div>Bugün Gider: <strong class="negatif">${paraBicimlendir(gider)}</strong></div>
+  const modal = document.createElement("div");
+  modal.className = "modal-arka-plan";
+  modal.innerHTML = `
+    <div class="modal-kutu">
+      <h3>Manuel Veresiye Girişi</h3>
+      <form id="vg-form">
+        <label>Oyuncu</label>
+        <input type="text" id="vg-ara" placeholder="İsim ile ara…" autocomplete="off" />
+        <div class="oyuncu-secim-liste" id="vg-liste"></div>
+        <label>Tutar (TL)</label>
+        <input type="number" id="vg-tutar" min="0.01" step="0.01" required />
+        <label>Açıklama</label>
+        <input type="text" id="vg-aciklama" placeholder="İsteğe bağlı" />
+        <p id="vg-hata" class="hata gizli"></p>
+        <div class="modal-butonlar">
+          <button type="submit" class="btn-birincil">Kaydet</button>
+          <button type="button" id="btn-vg-iptal" class="btn-iptal">İptal</button>
+        </div>
+      </form>
     </div>
-    <table class="hareket-tablo">
-      <thead><tr><th>Saat</th><th>Tür</th><th>Açıklama</th><th>Tutar</th></tr></thead>
-      <tbody>${satirlar}</tbody>
-    </table>
   `;
+  document.body.appendChild(modal);
+  modal.addEventListener("click", e => { if (e.target === modal) modal.remove(); });
+  elem("btn-vg-iptal").addEventListener("click", () => modal.remove());
+
+  let seciliOyuncu = null;
+  function vgListeRender(filtre) {
+    const liste = elem("vg-liste");
+    const k = (filtre || "").toLowerCase();
+    const gorunenler = oyuncular.filter(o => !k || (o.adSoyad || "").toLowerCase().includes(k));
+    liste.innerHTML = gorunenler.length
+      ? gorunenler.map(o => `
+          <div class="oyuncu-secim-satir${seciliOyuncu?.id === o.id ? " secili" : ""}" data-id="${o.id}">
+            <span class="oyss-ad">${o.adSoyad || o.kullaniciAdi}</span>
+            <span class="oyss-bakiye${(o.veresiye || 0) > 0 ? " negatif" : ""}">${paraBicimlendir(o.veresiye || 0)}</span>
+          </div>`).join("")
+      : `<p class="bos-mesaj">Oyuncu bulunamadı.</p>`;
+    liste.querySelectorAll(".oyuncu-secim-satir").forEach(s => {
+      s.addEventListener("click", () => { seciliOyuncu = oyuncular.find(o => o.id === s.dataset.id) || null; vgListeRender(elem("vg-ara").value); });
+    });
+  }
+  elem("vg-ara").addEventListener("input", () => vgListeRender(elem("vg-ara").value));
+  vgListeRender("");
+
+  elem("vg-form").addEventListener("submit", async e => {
+    e.preventDefault();
+    const hataEl = elem("vg-hata");
+    if (!seciliOyuncu) { hataEl.textContent = "Lütfen bir oyuncu seçin."; hataEl.classList.remove("gizli"); return; }
+    const tutar = parseFloat(elem("vg-tutar").value);
+    if (!tutar || tutar <= 0) return;
+    const aciklama = elem("vg-aciklama").value.trim() || "Manuel veresiye";
+    const btn = e.target.querySelector("[type='submit']");
+    btn.disabled = true;
+    try {
+      await Promise.all([
+        addDoc(collection(db, "kasaHareketleri"), {
+          kasaId: kasa.id, tutar, tur: "gelir", aciklama,
+          kategori: "manuel_veresiye",
+          oyuncuId: seciliOyuncu.id,
+          oyuncuAd: seciliOyuncu.adSoyad || seciliOyuncu.kullaniciAdi,
+          tarih: serverTimestamp(),
+        }),
+        updateDoc(doc(db, "kasalar", kasa.id), { bakiye: increment(tutar) }),
+        updateDoc(doc(db, "kullanicilar", seciliOyuncu.id), { veresiye: increment(tutar) }),
+      ]);
+      modal.remove();
+      await onSuccess();
+    } catch (err) {
+      hataEl.textContent = "Hata: " + err.message;
+      hataEl.classList.remove("gizli");
+      btn.disabled = false;
+    }
+  });
+}
+
+async function tahsilatYapModalAc(veresiyeKasa, onSuccess) {
+  const [oyuncuSnap, kasaSnap] = await Promise.all([
+    getDocs(collection(db, "kullanicilar")),
+    getDocs(query(collection(db, "kasalar"), orderBy("sira"))),
+  ]);
+  const oyuncular = oyuncuSnap.docs
+    .filter(d => d.data().rol === "oyuncu")
+    .map(d => ({ id: d.id, ...d.data() }))
+    .sort((a, b) => (a.adSoyad || "").localeCompare(b.adSoyad || "", "tr"));
+  const kasalar = kasaSnap.docs
+    .map(d => ({ id: d.id, ...d.data() }))
+    .filter(k => k.tip !== "veresiye");
+
+  const modal = document.createElement("div");
+  modal.className = "modal-arka-plan";
+  modal.innerHTML = `
+    <div class="modal-kutu">
+      <h3>Tahsilat Yap</h3>
+      <form id="tah-form">
+        <label>Oyuncu</label>
+        <input type="text" id="tah-ara" placeholder="İsim ile ara…" autocomplete="off" />
+        <div class="oyuncu-secim-liste" id="tah-liste"></div>
+        <div id="tah-ozet" class="veresiye-ozet gizli"></div>
+        <div class="tum-bakiye-satir">
+          <label>Tahsilat Tutarı (TL)</label>
+          <button type="button" id="btn-tum-bakiye" class="btn-tum-bakiye gizli">Tüm Bakiye</button>
+        </div>
+        <input type="number" id="tah-tutar" min="0.01" step="0.01" required />
+        <label>Tahsilat Kasası</label>
+        <select id="tah-kasa">${kasalar.map(k => `<option value="${k.id}">${k.ad}</option>`).join("")}</select>
+        <label>Açıklama</label>
+        <input type="text" id="tah-aciklama" placeholder="İsteğe bağlı" />
+        <p id="tah-hata" class="hata gizli"></p>
+        <div class="modal-butonlar">
+          <button type="submit" class="btn-birincil">Tahsilat Yap</button>
+          <button type="button" id="btn-tah-iptal" class="btn-iptal">İptal</button>
+        </div>
+      </form>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  modal.addEventListener("click", e => { if (e.target === modal) modal.remove(); });
+  elem("btn-tah-iptal").addEventListener("click", () => modal.remove());
+
+  let seciliOyuncu = null;
+  function tahOzetGuncelle() {
+    const ozetEl = elem("tah-ozet");
+    const tumBtn = elem("btn-tum-bakiye");
+    if (!seciliOyuncu) {
+      ozetEl.classList.add("gizli");
+      tumBtn.classList.add("gizli");
+      return;
+    }
+    const mevcut = seciliOyuncu.veresiye || 0;
+    ozetEl.classList.remove("gizli");
+    ozetEl.innerHTML = `<div class="veresiye-ozet-satir"><span>Mevcut Bakiye</span>
+      <span class="${mevcut > 0 ? "negatif" : ""}">${paraBicimlendir(mevcut)}</span></div>`;
+    if (mevcut > 0) {
+      tumBtn.classList.remove("gizli");
+      tumBtn.onclick = () => { elem("tah-tutar").value = mevcut.toFixed(2); };
+    } else {
+      tumBtn.classList.add("gizli");
+    }
+  }
+  function tahListeRender(filtre) {
+    const liste = elem("tah-liste");
+    const k = (filtre || "").toLowerCase();
+    const gorunenler = oyuncular.filter(o => !k || (o.adSoyad || "").toLowerCase().includes(k));
+    liste.innerHTML = gorunenler.length
+      ? gorunenler.map(o => `
+          <div class="oyuncu-secim-satir${seciliOyuncu?.id === o.id ? " secili" : ""}" data-id="${o.id}">
+            <span class="oyss-ad">${o.adSoyad || o.kullaniciAdi}</span>
+            <span class="oyss-bakiye${(o.veresiye || 0) > 0 ? " negatif" : ""}">${paraBicimlendir(o.veresiye || 0)}</span>
+          </div>`).join("")
+      : `<p class="bos-mesaj">Oyuncu bulunamadı.</p>`;
+    liste.querySelectorAll(".oyuncu-secim-satir").forEach(s => {
+      s.addEventListener("click", () => {
+        seciliOyuncu = oyuncular.find(o => o.id === s.dataset.id) || null;
+        tahListeRender(elem("tah-ara").value);
+        tahOzetGuncelle();
+      });
+    });
+  }
+  elem("tah-ara").addEventListener("input", () => tahListeRender(elem("tah-ara").value));
+  tahListeRender("");
+
+  elem("tah-form").addEventListener("submit", async e => {
+    e.preventDefault();
+    const hataEl = elem("tah-hata");
+    if (!seciliOyuncu) { hataEl.textContent = "Lütfen bir oyuncu seçin."; hataEl.classList.remove("gizli"); return; }
+    const tutar = parseFloat(elem("tah-tutar").value);
+    if (!tutar || tutar <= 0) return;
+    const hedefKasaId = elem("tah-kasa").value;
+    const hedefKasaAd = kasalar.find(k => k.id === hedefKasaId)?.ad || "";
+    const aciklama    = elem("tah-aciklama").value.trim();
+    const oyuncuAd    = seciliOyuncu.adSoyad || seciliOyuncu.kullaniciAdi;
+    const tahsilatId  = `tah_${Date.now()}`;
+    const btn = e.target.querySelector("[type='submit']");
+    btn.disabled = true;
+    try {
+      await Promise.all([
+        addDoc(collection(db, "kasaHareketleri"), {
+          kasaId: veresiyeKasa.id, tutar, tur: "tahsilat",
+          aciklama: aciklama || `Tahsilat → ${hedefKasaAd}`,
+          kategori: "tahsilat", oyuncuId: seciliOyuncu.id, oyuncuAd,
+          hedefKasaId, tahsilatId, tarih: serverTimestamp(),
+        }),
+        addDoc(collection(db, "kasaHareketleri"), {
+          kasaId: hedefKasaId, tutar, tur: "gelir",
+          aciklama: aciklama || `Veresiye Tahsilat - ${oyuncuAd}`,
+          kategori: "tahsilat_giris", oyuncuId: seciliOyuncu.id, oyuncuAd,
+          kaynakKasaId: veresiyeKasa.id, tahsilatId, tarih: serverTimestamp(),
+        }),
+        updateDoc(doc(db, "kasalar", veresiyeKasa.id), { bakiye: increment(-tutar) }),
+        updateDoc(doc(db, "kasalar", hedefKasaId),     { bakiye: increment(tutar) }),
+        updateDoc(doc(db, "kullanicilar", seciliOyuncu.id), { veresiye: increment(-tutar) }),
+      ]);
+      modal.remove();
+      await onSuccess();
+    } catch (err) {
+      hataEl.textContent = "Hata: " + err.message;
+      hataEl.classList.remove("gizli");
+      btn.disabled = false;
+    }
+  });
+}
+
+function gelirGiderModalAc(kasa, tur, onSuccess) {
+  const baslik = tur === "gelir" ? "Gelir Ekle" : "Gider Ekle";
+  const modal = document.createElement("div");
+  modal.className = "modal-arka-plan";
+  modal.innerHTML = `
+    <div class="modal-kutu">
+      <h3>${kasa.ad} — ${baslik}</h3>
+      <form id="gg-form">
+        <label>Tutar (TL)</label>
+        <input type="number" id="gg-tutar" min="0.01" step="0.01" required autofocus />
+        <label>Açıklama</label>
+        <input type="text" id="gg-aciklama" />
+        <p id="gg-hata" class="hata gizli"></p>
+        <div class="modal-butonlar">
+          <button type="submit" class="btn-birincil">${baslik}</button>
+          <button type="button" id="btn-gg-iptal" class="btn-iptal">İptal</button>
+        </div>
+      </form>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  modal.addEventListener("click", e => { if (e.target === modal) modal.remove(); });
+  elem("btn-gg-iptal").addEventListener("click", () => modal.remove());
+
+  elem("gg-form").addEventListener("submit", async e => {
+    e.preventDefault();
+    const tutar = parseFloat(elem("gg-tutar").value);
+    if (!tutar || tutar <= 0) return;
+    const aciklama = elem("gg-aciklama").value.trim() || (tur === "gelir" ? "Manuel gelir" : "Manuel gider");
+    const btn = e.target.querySelector("[type='submit']");
+    btn.disabled = true;
+    try {
+      await addDoc(collection(db, "kasaHareketleri"), {
+        kasaId: kasa.id, tutar, tur, aciklama,
+        tarih: serverTimestamp(), kategori: "manuel",
+      });
+      await updateDoc(doc(db, "kasalar", kasa.id), {
+        bakiye: increment(tur === "gelir" ? tutar : -tutar),
+      });
+      modal.remove();
+      await onSuccess();
+    } catch (err) {
+      elem("gg-hata").textContent = "Hata: " + err.message;
+      elem("gg-hata").classList.remove("gizli");
+      btn.disabled = false;
+    }
+  });
+}
+
+async function transferModalAc(kaynakKasa, onSuccess) {
+  const kasaSnap = await getDocs(query(collection(db, "kasalar"), orderBy("sira")));
+  const hedefler = kasaSnap.docs
+    .map(d => ({ id: d.id, ...d.data() }))
+    .filter(k => k.id !== kaynakKasa.id && k.tip !== "veresiye");
+
+  if (hedefler.length === 0) {
+    alert("Transfer yapılacak başka kasa bulunamadı.");
+    return;
+  }
+
+  const secenekler = hedefler.map(k => `<option value="${k.id}">${k.ad}</option>`).join("");
+  const modal = document.createElement("div");
+  modal.className = "modal-arka-plan";
+  modal.innerHTML = `
+    <div class="modal-kutu">
+      <h3>${kaynakKasa.ad} — Transfer Gönder</h3>
+      <form id="transfer-form">
+        <label>Alıcı Kasa</label>
+        <select id="transfer-hedef">${secenekler}</select>
+        <label>Tutar (TL)</label>
+        <input type="number" id="transfer-tutar" min="0.01" step="0.01" required />
+        <label>Açıklama</label>
+        <input type="text" id="transfer-aciklama" />
+        <p id="transfer-hata" class="hata gizli"></p>
+        <div class="modal-butonlar">
+          <button type="submit" class="btn-birincil">Gönder</button>
+          <button type="button" id="btn-transfer-iptal" class="btn-iptal">İptal</button>
+        </div>
+      </form>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  modal.addEventListener("click", e => { if (e.target === modal) modal.remove(); });
+  elem("btn-transfer-iptal").addEventListener("click", () => modal.remove());
+
+  elem("transfer-form").addEventListener("submit", async e => {
+    e.preventDefault();
+    const tutar = parseFloat(elem("transfer-tutar").value);
+    if (!tutar || tutar <= 0) return;
+    const hedefId = elem("transfer-hedef").value;
+    const hedefAd = hedefler.find(k => k.id === hedefId)?.ad || "";
+    const aciklama = elem("transfer-aciklama").value.trim();
+    const btn = e.target.querySelector("[type='submit']");
+    btn.disabled = true;
+    try {
+      await Promise.all([
+        addDoc(collection(db, "kasaHareketleri"), {
+          kasaId: kaynakKasa.id, tutar, tur: "transfer_cikis",
+          aciklama: aciklama || `Transfer → ${hedefAd}`,
+          tarih: serverTimestamp(), kategori: "transfer", hedefKasaId: hedefId,
+        }),
+        addDoc(collection(db, "kasaHareketleri"), {
+          kasaId: hedefId, tutar, tur: "transfer_giris",
+          aciklama: aciklama || `Transfer ← ${kaynakKasa.ad}`,
+          tarih: serverTimestamp(), kategori: "transfer", kaynakKasaId: kaynakKasa.id,
+        }),
+        updateDoc(doc(db, "kasalar", kaynakKasa.id), { bakiye: increment(-tutar) }),
+        updateDoc(doc(db, "kasalar", hedefId),       { bakiye: increment(tutar) }),
+      ]);
+      modal.remove();
+      await onSuccess();
+    } catch (err) {
+      elem("transfer-hata").textContent = "Hata: " + err.message;
+      elem("transfer-hata").classList.remove("gizli");
+      btn.disabled = false;
+    }
+  });
 }
 
 
@@ -1408,16 +2003,6 @@ async function kasaDetayAc(kapsayici, kasa) {
 // Oyuncular modülü tamamlanınca bu bölüm aktif edilecek.
 // ============================================================
 
-// TODO: veresiyeTahsilatAc()
-
-
-// ============================================================
-// 14. KASALAR ARASI TRANSFER
-// Bakiye hareketi — gelir/gider sayılmaz, sadece aktarım.
-// Yönetim Paneli ile birlikte eklenecek.
-// ============================================================
-
-// TODO: kasaTransferiAc()
 
 
 // ============================================================
@@ -1590,7 +2175,7 @@ async function oyuncuListesiYukle() {
             <th>EYS1</th>
             <th>EYS2</th>
             <th>Puan</th>
-            <th>Veresiye</th>
+            <th>Bakiye</th>
             ${isAdmin ? `<th>İşlem</th>` : ""}
           </tr>
         </thead>
@@ -2136,6 +2721,7 @@ onAuthStateChanged(auth, async (firebaseUser) => {
 
   const firmaSnap = await getDoc(doc(db, "sistem", "firma"));
   if (firmaSnap.exists() && firmaSnap.data().ad) durum.firmaAdi = firmaSnap.data().ad;
+  document.title = durum.firmaAdi;
 
   if (durum.kullanici.rol === "oyuncu") {
     oyuncuLayoutGoster();
