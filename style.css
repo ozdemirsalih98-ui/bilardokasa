@@ -1543,7 +1543,7 @@ input.input-readonly, input:disabled {
   border-radius: var(--yaricap);
   box-shadow: var(--golge);
   padding: 16px;
-  margin: 16px;
+  margin-top: 16px;
 }
 
 .kr-baslik {
