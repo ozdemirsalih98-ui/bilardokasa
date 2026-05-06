@@ -255,6 +255,49 @@ function layoutGoster() {
 
   elem("cikis-btn").addEventListener("click", cikisYap);
   routerBaslat();
+  pullToRefreshBagla();
+}
+
+function pullToRefreshBagla() {
+  const ESIK = 72;
+  let basY = 0, aktif = false, yenileniyor = false;
+
+  let ptr = document.getElementById("ptr-indicator");
+  if (!ptr) {
+    ptr = document.createElement("div");
+    ptr.id = "ptr-indicator";
+    ptr.innerHTML = `<div class="ptr-ok">↻</div>`;
+    document.body.prepend(ptr);
+  }
+
+  document.addEventListener("touchstart", e => {
+    if (yenileniyor || window.scrollY > 0) return;
+    basY = e.touches[0].clientY;
+    aktif = true;
+  }, { passive: true });
+
+  document.addEventListener("touchmove", e => {
+    if (!aktif) return;
+    const cekme = Math.max(0, Math.min(e.touches[0].clientY - basY, ESIK * 1.5));
+    if (cekme > 0) {
+      ptr.style.height = `${cekme * 0.55}px`;
+      ptr.style.opacity = Math.min(cekme / ESIK, 1);
+      ptr.querySelector(".ptr-ok").style.transform = `rotate(${cekme * 2.5}deg)`;
+    }
+  }, { passive: true });
+
+  document.addEventListener("touchend", () => {
+    if (!aktif) return;
+    aktif = false;
+    const h = parseFloat(ptr.style.height || "0");
+    ptr.style.height = "0";
+    ptr.style.opacity = "0";
+    if (h >= ESIK * 0.42 && !yenileniyor) {
+      yenileniyor = true;
+      sayfaGoster(durum.sayfa);
+      setTimeout(() => { yenileniyor = false; }, 1000);
+    }
+  });
 }
 
 

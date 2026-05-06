@@ -561,9 +561,10 @@ label small {
 }
 
 /* Renk sınıfları */
-.pozitif { color: var(--renk-pozitif); }
-.negatif { color: var(--renk-negatif); }
-.sifir   { color: var(--renk-sifir); }
+.pozitif      { color: var(--renk-pozitif); }
+.negatif      { color: var(--renk-negatif); }
+.sifir        { color: var(--renk-sifir); }
+.tahsilat-renk { color: var(--renk-birincil); }
 
 /* Yardımcı sınıflar */
 .sayi    { text-align: right; font-variant-numeric: tabular-nums; }
@@ -1097,9 +1098,58 @@ label small {
   flex-wrap: wrap;
 }
 
-.islem-hucre {
-  width: 36px;
-  text-align: center;
+/* Pull-to-refresh */
+#ptr-indicator {
+  height: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: height 0.1s, opacity 0.1s;
+}
+.ptr-ok {
+  font-size: 22px;
+  color: var(--renk-birincil);
+  display: inline-block;
+  transition: transform 0.05s;
+}
+
+.tarih-saat-hucre { white-space: nowrap; font-size: 12px; color: var(--renk-orta); }
+
+.silinebilir-satir { cursor: pointer; }
+.silinebilir-satir:hover { background: #fef9ec; }
+.secili-satir { background: #fef3c7 !important; }
+
+.aksiyon-satir td { padding: 0; }
+.aksiyon-hucre {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px !important;
+  background: #fef3c7;
+  font-size: 13px;
+  color: var(--renk-orta);
+  flex-wrap: wrap;
+}
+.btn-aksiyon-sil {
+  background: var(--renk-negatif);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 4px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-aksiyon-iptal {
+  background: none;
+  border: 1px solid var(--renk-sinir);
+  border-radius: 6px;
+  padding: 4px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--renk-orta);
 }
 
 .tum-bakiye-satir {
@@ -1122,18 +1172,6 @@ label small {
 }
 .btn-tum-bakiye:hover { background: var(--renk-birincil); color: #fff; }
 
-.btn-sil-kucuk {
-  background: none;
-  border: none;
-  color: var(--renk-negatif);
-  cursor: pointer;
-  font-size: 13px;
-  padding: 2px 6px;
-  border-radius: 4px;
-  opacity: 0.6;
-  transition: opacity 0.15s;
-}
-.btn-sil-kucuk:hover { opacity: 1; background: #fee2e2; }
 
 .rapor-kasa-baslik {
   font-size: 11px;
