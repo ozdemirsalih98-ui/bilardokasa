@@ -42,6 +42,14 @@ const durum = {
   firmaAdi: "AKTEPE BİLARDO", // sistem/firma dokümanından yüklenir
 };
 
+const TUR_LISTESI = [
+  { id: "gelir",          etiket: "Gelir" },
+  { id: "gider",          etiket: "Gider" },
+  { id: "tahsilat",       etiket: "Tahsilat" },
+  { id: "transfer_giris", etiket: "Transfer Giriş" },
+  { id: "transfer_cikis", etiket: "Transfer Çıkış" },
+];
+
 
 // ============================================================
 // 3. YARDIMCI FONKSİYONLAR
@@ -80,6 +88,11 @@ function bugunBaslangic() {
 
 function elem(id) {
   return document.getElementById(id);
+}
+
+function formatTarihSaat(dt) {
+  if (!dt) return "—";
+  return `${String(dt.getDate()).padStart(2,"0")}/${String(dt.getMonth()+1).padStart(2,"0")}/${String(dt.getFullYear()).slice(-2)} ${dt.toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit"})}`;
 }
 
 async function authHesabiniSil(kullaniciAdi, sifre) {
@@ -1471,6 +1484,7 @@ async function kasalarSayfasi(kapsayici) {
   kapsayici.innerHTML = `
     <div class="sayfa-baslik"><h2>Kasalar</h2></div>
     <div id="kasalar-liste">Yükleniyor...</div>
+    <div id="kasa-rapor-bolum"></div>
   `;
 
   const [kasaSnap, hareketSnap] = await Promise.all([
@@ -1480,6 +1494,9 @@ async function kasalarSayfasi(kapsayici) {
 
   const bugunMs = bugunBaslangic().toMillis();
   const kasalar = kasaSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+  const kasaMap = {};
+  kasalar.forEach(k => { kasaMap[k.id] = k; });
+
   const hareketler = hareketSnap.docs
     .map(d => ({ id: d.id, ...d.data() }))
     .filter(h => h.tarih && h.tarih.toMillis() >= bugunMs);
@@ -1492,6 +1509,99 @@ async function kasalarSayfasi(kapsayici) {
       const kasa = kasalar.find(k => k.id === kart.dataset.id);
       if (kasa) kasaDetayAc(kapsayici, kasa);
     });
+  });
+
+  // Tarih aralığı raporu
+  const bugunStr = (() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-${String(now.getDate()).padStart(2,"0")}`;
+  })();
+
+  const raporBolum = elem("kasa-rapor-bolum");
+  raporBolum.innerHTML = `
+    <div class="kr-kapsayici">
+      <div class="kr-baslik">Tarih Aralığı Raporu</div>
+      <div class="kr-tarih-satir">
+        <div class="kr-tarih-grup">
+          <label>Başlangıç</label>
+          <input type="date" id="kr-baslangic" value="${bugunStr}" />
+        </div>
+        <div class="kr-tarih-grup">
+          <label>Bitiş</label>
+          <input type="date" id="kr-bitis" value="${bugunStr}" />
+        </div>
+      </div>
+      <div class="kr-filtreler">
+        <div class="kr-filtre-grup">
+          <div class="kr-filtre-baslik">Kasalar</div>
+          <div class="kr-check-listesi">
+            ${kasalar.map(k => `
+              <label class="kr-check-satir">
+                <input type="checkbox" class="kr-kasa-cb" value="${k.id}" checked />
+                ${k.ad}
+              </label>
+            `).join("")}
+          </div>
+        </div>
+        <div class="kr-filtre-grup">
+          <div class="kr-filtre-baslik">İşlem Türü</div>
+          <div class="kr-check-listesi">
+            ${TUR_LISTESI.map(t => `
+              <label class="kr-check-satir">
+                <input type="checkbox" class="kr-tur-cb" value="${t.id}" checked />
+                ${t.etiket}
+              </label>
+            `).join("")}
+          </div>
+        </div>
+      </div>
+      <div class="kr-eylem-satir">
+        <button id="kr-listele" class="btn-birincil">Listele</button>
+        <button id="kr-excel" class="btn-ikincil btn-kucuk gizli">Excel</button>
+      </div>
+      <div id="kr-sonuc"></div>
+    </div>
+  `;
+
+  let sonHareketler = [];
+
+  elem("kr-listele").addEventListener("click", async () => {
+    const baslangicStr = elem("kr-baslangic").value;
+    const bitisStr     = elem("kr-bitis").value;
+    if (!baslangicStr || !bitisStr) return;
+
+    const baslangic = Timestamp.fromDate(new Date(baslangicStr + "T00:00:00"));
+    const bitis     = Timestamp.fromDate(new Date(bitisStr     + "T23:59:59"));
+
+    const seciliKasalar = [...raporBolum.querySelectorAll(".kr-kasa-cb:checked")].map(cb => cb.value);
+    const seciliTurler  = [...raporBolum.querySelectorAll(".kr-tur-cb:checked")].map(cb => cb.value);
+
+    const btn = elem("kr-listele");
+    btn.textContent = "Yükleniyor…";
+    btn.disabled = true;
+
+    try {
+      const snap = await getDocs(query(
+        collection(db, "kasaHareketleri"),
+        where("tarih", ">=", baslangic),
+        where("tarih", "<=", bitis),
+        orderBy("tarih"),
+      ));
+      const filtreli = snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter(h => seciliKasalar.includes(h.kasaId) && seciliTurler.includes(h.tur));
+
+      sonHareketler = filtreli;
+      kasaRaporuRenderle(filtreli, kasaMap, elem("kr-sonuc"));
+      elem("kr-excel").classList.remove("gizli");
+    } finally {
+      btn.textContent = "Listele";
+      btn.disabled = false;
+    }
+  });
+
+  elem("kr-excel").addEventListener("click", () => {
+    kasaRaporuXlsx(sonHareketler, kasaMap);
   });
 }
 
@@ -1532,6 +1642,103 @@ function kasaKartiHtml(kasa, hareketler) {
       </div>
     </div>
   `;
+}
+
+
+function kasaRaporuRenderle(hareketler, kasaMap, hedef) {
+  if (hareketler.length === 0) {
+    hedef.innerHTML = `<p class="bos-mesaj" style="margin-top:12px">Seçilen kriterlere uygun hareket bulunamadı.</p>`;
+    return;
+  }
+
+  const kasaToplam = {};
+  const turToplam  = {};
+  let genelToplam  = 0;
+
+  hareketler.forEach(h => {
+    const t = h.tutar || 0;
+    kasaToplam[h.kasaId] = (kasaToplam[h.kasaId] || 0) + t;
+    turToplam[h.tur]     = (turToplam[h.tur]     || 0) + t;
+    genelToplam += t;
+  });
+
+  hedef.innerHTML = `
+    <div class="kr-tablo-kapsayici">
+      <table class="kr-tablo">
+        <thead>
+          <tr>
+            <th>Tarih</th>
+            <th>Kasa</th>
+            <th>Tür</th>
+            <th>Açıklama</th>
+            <th class="kr-tutar-th">Tutar</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${hareketler.map(h => {
+            const dt = h.tarih?.toDate?.();
+            const tarihStr = formatTarihSaat(dt);
+            const kasaAd   = kasaMap[h.kasaId]?.ad || "—";
+            const turEt    = TUR_LISTESI.find(t => t.id === h.tur)?.etiket || h.tur;
+            const pozitif  = ["gelir","tahsilat","transfer_giris"].includes(h.tur);
+            return `<tr>
+              <td class="tarih-saat-hucre">${tarihStr}</td>
+              <td>${kasaAd}</td>
+              <td>${turEt}</td>
+              <td>${h.aciklama || "—"}</td>
+              <td class="kr-tutar-td ${pozitif ? "pozitif" : "negatif"}">${paraBicimlendir(h.tutar || 0)}</td>
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>
+    <div class="kr-ozet-alani">
+      <div class="kr-ozet-grup">
+        <div class="kr-ozet-baslik">Kasa Bazlı</div>
+        ${Object.entries(kasaToplam).map(([kasaId, toplam]) => `
+          <div class="kr-ozet-satir">
+            <span>${kasaMap[kasaId]?.ad || kasaId}</span>
+            <span>${paraBicimlendir(toplam)}</span>
+          </div>
+        `).join("")}
+      </div>
+      <div class="kr-ozet-grup">
+        <div class="kr-ozet-baslik">Tür Bazlı</div>
+        ${Object.entries(turToplam).map(([tur, toplam]) => {
+          const etiket = TUR_LISTESI.find(t => t.id === tur)?.etiket || tur;
+          return `<div class="kr-ozet-satir">
+            <span>${etiket}</span>
+            <span>${paraBicimlendir(toplam)}</span>
+          </div>`;
+        }).join("")}
+      </div>
+    </div>
+    <div class="kr-genel-toplam">
+      <span>Genel Toplam</span>
+      <span>${paraBicimlendir(genelToplam)}</span>
+    </div>
+  `;
+}
+
+function kasaRaporuXlsx(hareketler, kasaMap) {
+  const satirlar = hareketler.map(h => {
+    const dt = h.tarih?.toDate?.();
+    return {
+      "Tarih":     formatTarihSaat(dt),
+      "Kasa":      kasaMap[h.kasaId]?.ad || h.kasaId || "",
+      "Tür":       TUR_LISTESI.find(t => t.id === h.tur)?.etiket || h.tur || "",
+      "Açıklama":  h.aciklama || "",
+      "Tutar":     h.tutar || 0,
+    };
+  });
+
+  const ws = window.XLSX.utils.json_to_sheet(satirlar);
+  ws["!cols"] = [{ wch: 16 }, { wch: 18 }, { wch: 16 }, { wch: 32 }, { wch: 12 }];
+  const wb = window.XLSX.utils.book_new();
+  window.XLSX.utils.book_append_sheet(wb, ws, "Rapor");
+  const tarih = new Date();
+  const dosyaAd = `kasa-raporu-${tarih.getFullYear()}${String(tarih.getMonth()+1).padStart(2,"0")}${String(tarih.getDate()).padStart(2,"0")}.xlsx`;
+  window.XLSX.writeFile(wb, dosyaAd);
 }
 
 
