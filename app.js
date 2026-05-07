@@ -238,10 +238,10 @@ function girisEkraniGoster() {
 // ============================================================
 
 const NAV_MENULERI = [
-  { sayfa: "masalar",   etiket: "Masalar",   ikon: "🎱", roller: ["admin", "eleman", "personel"] },
-  { sayfa: "kasalar",   etiket: "Kasalar",   ikon: "💰", roller: ["admin", "personel"] },
-  { sayfa: "oyuncular", etiket: "Oyuncular", ikon: "👥", roller: ["admin", "eleman", "personel"] },
-  { sayfa: "yonetim",   etiket: "Yönetim",   ikon: "⚙️", roller: ["admin"] },
+  { sayfa: "masalar",   etiket: "Masalar",   ikon: "🎱", roller: ["sahip", "admin", "eleman", "personel"] },
+  { sayfa: "kasalar",   etiket: "Kasalar",   ikon: "💰", roller: ["sahip", "admin", "personel"] },
+  { sayfa: "oyuncular", etiket: "Oyuncular", ikon: "👥", roller: ["sahip", "admin", "eleman", "personel"] },
+  { sayfa: "yonetim",   etiket: "Yönetim",   ikon: "⚙️", roller: ["sahip", "admin"] },
 ];
 
 function layoutGoster() {
@@ -2985,7 +2985,7 @@ async function kullaniciYonetimi(kapsayici) {
     const snap = await getDocs(collection(db, "kullanicilar"));
     const liste = snap.docs
       .map(d => ({ id: d.id, ...d.data() }))
-      .filter(u => u.rol === "admin" || u.rol === "personel")
+      .filter(u => u.rol === "sahip" || u.rol === "admin" || u.rol === "personel")
       .sort((a, b) => (a.kullaniciAdi || "").localeCompare(b.kullaniciAdi || "", "tr"));
 
     if (liste.length === 0) {
@@ -2993,17 +2993,22 @@ async function kullaniciYonetimi(kapsayici) {
       return;
     }
 
+    const rolEtiket = r => r === "sahip" ? "Owner" : r === "admin" ? "Admin" : "Personel";
+    const silinebilir = u => u.id !== durum.kullanici.uid && u.rol !== "sahip";
+
     el.innerHTML = `
       <div class="yonetim-liste">
         ${liste.map(u => `
           <div class="yonetim-satir">
             <div>
               <div class="yonetim-satir-ad">@${u.kullaniciAdi}</div>
-              <div class="yonetim-satir-aciklama">${u.rol === "admin" ? "Admin" : "Personel"}</div>
+              <div class="yonetim-satir-aciklama">${rolEtiket(u.rol)}</div>
             </div>
-            ${u.id !== durum.kullanici.uid
-              ? `<button class="btn-sil btn-kul-sil" data-id="${u.id}" data-kadi="${u.kullaniciAdi}" data-sifre="${u.sifre || "123456"}">Sil</button>`
-              : `<span class="kul-siz-badge">Siz</span>`}
+            ${u.id === durum.kullanici.uid
+              ? `<span class="kul-siz-badge">Siz</span>`
+              : u.rol === "sahip"
+                ? `<span class="kul-siz-badge">Owner</span>`
+                : `<button class="btn-sil btn-kul-sil" data-id="${u.id}" data-kadi="${u.kullaniciAdi}" data-sifre="${u.sifre || "123456"}">Sil</button>`}
           </div>
         `).join("")}
       </div>
@@ -3069,6 +3074,12 @@ async function kullaniciYonetimi(kapsayici) {
 
 
 async function firmaYonetimi(kapsayici) {
+  const sahipVar = await getDocs(query(
+    collection(db, "kullanicilar"), where("rol", "==", "sahip")
+  )).then(s => !s.empty);
+
+  const benSahipOlabilirMiyim = !sahipVar && ["admin", "personel"].includes(durum.kullanici.rol);
+
   kapsayici.innerHTML = `
     <div class="sayfa-baslik">
       <button class="btn-geri" id="btn-yonetim-geri-firma">← Yönetim</button>
@@ -3080,7 +3091,13 @@ async function firmaYonetimi(kapsayici) {
       <p id="firma-hata" class="hata gizli"></p>
       <button id="btn-firma-kaydet" class="btn-birincil">Kaydet</button>
     </div>
-  `;
+    ${benSahipOlabilirMiyim ? `
+    <div class="yonetim-form-kart" style="border:2px solid var(--renk-negatif)">
+      <h3>Sahiplik</h3>
+      <p class="profil-aciklama">Henüz sahip atanmamış. Kendinizi sahip yaparsanız başka hiç kimse sizi silemez. Bu işlem geri alınamaz.</p>
+      <button id="btn-sahiplik-al" class="btn-birincil">Sahipliği Al</button>
+    </div>
+    ` : ""}`;
 
   elem("firma-ad").addEventListener("input", function() {
     const s = this.selectionStart, e = this.selectionEnd;
@@ -3089,6 +3106,22 @@ async function firmaYonetimi(kapsayici) {
   });
 
   elem("btn-yonetim-geri-firma").addEventListener("click", () => yonetimSayfasi(kapsayici));
+
+  if (benSahipOlabilirMiyim) {
+    elem("btn-sahiplik-al").addEventListener("click", async () => {
+      if (!confirm("Kendinizi sahip olarak atamak istediğinize emin misiniz? Bu işlem geri alınamaz.")) return;
+      const btn = elem("btn-sahiplik-al");
+      btn.disabled = true;
+      try {
+        await updateDoc(doc(db, "kullanicilar", durum.kullanici.uid), { rol: "sahip" });
+        durum.kullanici.rol = "sahip";
+        firmaYonetimi(kapsayici);
+      } catch (err) {
+        alert("Hata: " + err.message);
+        btn.disabled = false;
+      }
+    });
+  }
 
   elem("btn-firma-kaydet").addEventListener("click", async () => {
     const hataEl = elem("firma-hata");
@@ -3136,7 +3169,7 @@ onAuthStateChanged(auth, async (firebaseUser) => {
   }
 
   const veri = snap.data();
-  if (!veri.rol) veri.rol = "personel";
+  if (!["sahip", "admin", "personel", "eleman", "oyuncu"].includes(veri.rol)) veri.rol = "personel";
   durum.kullanici = { uid: firebaseUser.uid, ...veri };
 
   const firmaSnap = await getDoc(doc(db, "sistem", "firma"));
