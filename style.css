@@ -704,6 +704,35 @@ label small {
   margin-left: 8px;
 }
 
+.yonetim-satir {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--renk-sinir);
+}
+.yonetim-satir:last-child { border-bottom: none; }
+
+.yonetim-satir-ad {
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.yonetim-satir-aciklama {
+  font-size: 12px;
+  color: var(--renk-acik);
+  margin-top: 2px;
+}
+
+.kul-siz-badge {
+  font-size: 12px;
+  color: var(--renk-acik);
+  background: var(--renk-arkaplan);
+  border: 1px solid var(--renk-sinir);
+  border-radius: 20px;
+  padding: 3px 10px;
+}
+
 .aktif-etiket {
   font-size: 12px;
   color: var(--renk-acik);
@@ -1537,6 +1566,26 @@ input.input-readonly, input:disabled {
 /* ============================================================
    KASA RAPORU
    ============================================================ */
+
+.btn-rapor-toggle {
+  display: block;
+  width: 100%;
+  margin-top: 16px;
+  padding: 10px 16px;
+  background: var(--renk-beyaz);
+  border: 1.5px dashed var(--renk-sinir);
+  border-radius: var(--yaricap);
+  color: var(--renk-birincil);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+  transition: background 0.15s, border-color 0.15s;
+}
+.btn-rapor-toggle:hover {
+  background: var(--renk-aktif-bg);
+  border-color: var(--renk-birincil);
+}
 
 .kr-kapsayici {
   background: var(--renk-beyaz);

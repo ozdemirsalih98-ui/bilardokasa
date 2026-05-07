@@ -238,9 +238,9 @@ function girisEkraniGoster() {
 // ============================================================
 
 const NAV_MENULERI = [
-  { sayfa: "masalar",   etiket: "Masalar",   ikon: "🎱", roller: ["admin", "eleman"] },
-  { sayfa: "kasalar",   etiket: "Kasalar",   ikon: "💰", roller: ["admin"] },
-  { sayfa: "oyuncular", etiket: "Oyuncular", ikon: "👥", roller: ["admin", "eleman"] },
+  { sayfa: "masalar",   etiket: "Masalar",   ikon: "🎱", roller: ["admin", "eleman", "personel"] },
+  { sayfa: "kasalar",   etiket: "Kasalar",   ikon: "💰", roller: ["admin", "personel"] },
+  { sayfa: "oyuncular", etiket: "Oyuncular", ikon: "👥", roller: ["admin", "eleman", "personel"] },
   { sayfa: "yonetim",   etiket: "Yönetim",   ikon: "⚙️", roller: ["admin"] },
 ];
 
@@ -255,7 +255,7 @@ function layoutGoster() {
       <header class="ust-bar">
         <span class="ust-bar-logo">${durum.firmaAdi}</span>
         <div class="ust-bar-sag">
-          <span class="ust-bar-kullanici">${durum.kullanici.adSoyad}</span>
+          <span class="ust-bar-kullanici">${durum.kullanici.adSoyad || durum.kullanici.kullaniciAdi || ""}</span>
           <button id="cikis-btn">Çıkış</button>
         </div>
       </header>
@@ -267,6 +267,11 @@ function layoutGoster() {
   `;
 
   elem("cikis-btn").addEventListener("click", cikisYap);
+
+  if (durum.kullanici.ilkGiris) {
+    sifreDegistirModalAc(true);
+  }
+
   routerBaslat();
   pullToRefreshBagla();
 }
@@ -327,7 +332,7 @@ function oyuncuLayoutGoster() {
       <header class="ust-bar">
         <span class="ust-bar-logo">${durum.firmaAdi}</span>
         <div class="ust-bar-sag">
-          <span class="ust-bar-kullanici">${durum.kullanici.adSoyad}</span>
+          <span class="ust-bar-kullanici">${durum.kullanici.adSoyad || durum.kullanici.kullaniciAdi || ""}</span>
           <button id="cikis-btn">Çıkış</button>
         </div>
       </header>
@@ -528,7 +533,8 @@ function masalarSayfasi(kapsayici) {
   kapsayici.innerHTML = `
     <div class="sayfa-baslik"><h2>Masalar</h2></div>
     <div id="masalar-grid">Yükleniyor...</div>
-    <div class="rapor-bolumu">
+    ${durum.kullanici.rol !== "personel" ? `<button id="btn-rapor-toggle" class="btn-rapor-toggle">Rapor Göster</button>` : ""}
+    <div class="rapor-bolumu gizli" id="rapor-wrapper">
       <div class="rapor-baslik-satir">
         <h3>Rapor</h3>
         <div class="rapor-tarih-bant">
@@ -538,7 +544,7 @@ function masalarSayfasi(kapsayici) {
           <button id="rapor-goster-btn" class="btn-birincil btn-kucuk">Göster</button>
         </div>
       </div>
-      <div id="rapor-icerik"><p class="bos-mesaj">Yükleniyor...</p></div>
+      <div id="rapor-icerik"></div>
     </div>
   `;
 
@@ -594,7 +600,15 @@ function masalarSayfasi(kapsayici) {
   }
 
   elem("rapor-goster-btn").addEventListener("click", raporGoster);
-  raporGoster();
+
+  if (elem("btn-rapor-toggle")) {
+    elem("btn-rapor-toggle").addEventListener("click", () => {
+      const wrapper = elem("rapor-wrapper");
+      const gizlendi = wrapper.classList.toggle("gizli");
+      elem("btn-rapor-toggle").textContent = gizlendi ? "Rapor Göster" : "Rapor Gizle";
+      if (!gizlendi) raporGoster();
+    });
+  }
 
   const masaQ = query(collection(db, "masalar"), orderBy("sira"));
   durum.snapshotTemizle = onSnapshot(masaQ, async (snap) => {
@@ -1484,7 +1498,8 @@ async function kasalarSayfasi(kapsayici) {
   kapsayici.innerHTML = `
     <div class="sayfa-baslik"><h2>Kasalar</h2></div>
     <div id="kasalar-liste">Yükleniyor...</div>
-    <div id="kasa-rapor-bolum"></div>
+    ${durum.kullanici.rol !== "personel" ? `<button id="kasa-rapor-toggle" class="btn-rapor-toggle">Rapor Göster</button>` : ""}
+    <div id="kasa-rapor-bolum" class="gizli"></div>
   `;
 
   const [kasaSnap, hareketSnap] = await Promise.all([
@@ -1603,6 +1618,13 @@ async function kasalarSayfasi(kapsayici) {
   elem("kr-excel").addEventListener("click", () => {
     kasaRaporuXlsx(sonHareketler, kasaMap);
   });
+
+  if (elem("kasa-rapor-toggle")) {
+    elem("kasa-rapor-toggle").addEventListener("click", () => {
+      const gizlendi = raporBolum.classList.toggle("gizli");
+      elem("kasa-rapor-toggle").textContent = gizlendi ? "Rapor Göster" : "Rapor Gizle";
+    });
+  }
 }
 
 function kasaKartiHtml(kasa, hareketler) {
@@ -2583,10 +2605,11 @@ function oyuncuDuzenleModalAc(oyuncu) {
 // ============================================================
 
 const YONETIM_MENUSU = [
-  { id: "masalar", etiket: "Masalar",        aciklama: "Masa ekle, sil, ücret güncelle" },
-  { id: "kasalar", etiket: "Kasalar",        aciklama: "Kasa ekle, sil" },
-  { id: "urunler", etiket: "Ürünler",        aciklama: "Ürün ve fiyat tanımla" },
-  { id: "firma",   etiket: "Firma Bilgileri", aciklama: "Firma adı ve genel ayarlar" },
+  { id: "masalar",      etiket: "Masalar",        aciklama: "Masa ekle, sil, ücret güncelle" },
+  { id: "kasalar",      etiket: "Kasalar",        aciklama: "Kasa ekle, sil" },
+  { id: "urunler",      etiket: "Ürünler",        aciklama: "Ürün ve fiyat tanımla" },
+  { id: "kullanicilar", etiket: "Kullanıcılar",   aciklama: "Admin ve personel hesapları" },
+  { id: "firma",        etiket: "Firma Bilgileri", aciklama: "Firma adı ve genel ayarlar" },
 ];
 
 function yonetimSayfasi(kapsayici) {
@@ -2608,10 +2631,11 @@ function yonetimSayfasi(kapsayici) {
   kapsayici.querySelectorAll(".yonetim-menu-satir").forEach(btn => {
     btn.addEventListener("click", () => {
       const menu = btn.dataset.menu;
-      if (menu === "masalar") masaYonetimi(kapsayici);
-      else if (menu === "kasalar") kasaYonetimi(kapsayici);
-      else if (menu === "urunler") urunYonetimi(kapsayici);
-      else if (menu === "firma")   firmaYonetimi(kapsayici);
+      if (menu === "masalar")           masaYonetimi(kapsayici);
+      else if (menu === "kasalar")      kasaYonetimi(kapsayici);
+      else if (menu === "urunler")      urunYonetimi(kapsayici);
+      else if (menu === "kullanicilar") kullaniciYonetimi(kapsayici);
+      else if (menu === "firma")        firmaYonetimi(kapsayici);
     });
   });
 }
@@ -2933,6 +2957,117 @@ async function urunListesiYukle() {
 }
 
 
+async function kullaniciYonetimi(kapsayici) {
+  kapsayici.innerHTML = `
+    <div class="sayfa-baslik">
+      <button class="btn-geri" id="btn-yonetim-geri">← Yönetim</button>
+      <h2>Kullanıcılar</h2>
+    </div>
+    <div class="yonetim-form-kart">
+      <h3>Yeni Kullanıcı Ekle</h3>
+      <input type="text" id="kul-kullanici" placeholder="Kullanıcı Adı" autocomplete="off" />
+      <select id="kul-rol">
+        <option value="personel">Personel</option>
+        <option value="admin">Admin</option>
+      </select>
+      <p class="profil-aciklama">Varsayılan şifre: <strong>123456</strong> — İlk girişte değiştirilmesi istenir.</p>
+      <p id="kul-hata" class="hata gizli"></p>
+      <button id="btn-kul-ekle" class="btn-birincil">Ekle</button>
+    </div>
+    <div id="kul-listesi">Yükleniyor...</div>
+  `;
+
+  elem("btn-yonetim-geri").addEventListener("click", () => yonetimSayfasi(kapsayici));
+
+  async function kullaniciListesiniYukle() {
+    const el = elem("kul-listesi");
+    if (!el) return;
+    const snap = await getDocs(collection(db, "kullanicilar"));
+    const liste = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(u => u.rol === "admin" || u.rol === "personel")
+      .sort((a, b) => (a.kullaniciAdi || "").localeCompare(b.kullaniciAdi || "", "tr"));
+
+    if (liste.length === 0) {
+      el.innerHTML = `<p class="bos-mesaj">Henüz kullanıcı eklenmedi.</p>`;
+      return;
+    }
+
+    el.innerHTML = `
+      <div class="yonetim-liste">
+        ${liste.map(u => `
+          <div class="yonetim-satir">
+            <div>
+              <div class="yonetim-satir-ad">@${u.kullaniciAdi}</div>
+              <div class="yonetim-satir-aciklama">${u.rol === "admin" ? "Admin" : "Personel"}</div>
+            </div>
+            ${u.id !== durum.kullanici.uid
+              ? `<button class="btn-sil btn-kul-sil" data-id="${u.id}" data-kadi="${u.kullaniciAdi}" data-sifre="${u.sifre || "123456"}">Sil</button>`
+              : `<span class="kul-siz-badge">Siz</span>`}
+          </div>
+        `).join("")}
+      </div>
+    `;
+
+    el.querySelectorAll(".btn-kul-sil").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        if (!confirm(`@${btn.dataset.kadi} kullanıcısını silmek istediğinize emin misiniz?`)) return;
+        btn.disabled = true;
+        try {
+          await deleteDoc(doc(db, "kullanicilar", btn.dataset.id));
+          authHesabiniSil(btn.dataset.kadi, btn.dataset.sifre);
+          kullaniciListesiniYukle();
+        } catch (err) {
+          alert("Hata: " + err.message);
+          btn.disabled = false;
+        }
+      });
+    });
+  }
+
+  kullaniciListesiniYukle();
+
+  elem("btn-kul-ekle").addEventListener("click", async () => {
+    const hataEl = elem("kul-hata");
+    hataEl.classList.add("gizli");
+    const kullaniciAdi = elem("kul-kullanici").value.trim().toLowerCase();
+    const rol = elem("kul-rol").value;
+
+    if (!kullaniciAdi) {
+      hataEl.textContent = "Kullanıcı adı gerekli.";
+      hataEl.classList.remove("gizli");
+      return;
+    }
+
+    const btn = elem("btn-kul-ekle");
+    btn.disabled = true;
+    try {
+      const ikincilApp = initializeApp(FIREBASE_CONFIG, `ikincil_${Date.now()}`);
+      const ikincilAuth = getAuth(ikincilApp);
+      let uid;
+      try {
+        const kred = await createUserWithEmailAndPassword(ikincilAuth, kuadEmaile(kullaniciAdi), "123456");
+        uid = kred.user.uid;
+      } finally {
+        await deleteApp(ikincilApp).catch(() => {});
+      }
+      await setDoc(doc(db, "kullanicilar", uid), {
+        kullaniciAdi, rol, ilkGiris: true, sifre: "123456",
+      });
+      elem("kul-kullanici").value = "";
+      kullaniciListesiniYukle();
+    } catch (err) {
+      hataEl.textContent = err.code === "auth/email-already-in-use"
+        ? "Bu kullanıcı adı zaten kullanımda."
+        : "Hata: " + err.message;
+      hataEl.classList.remove("gizli");
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
+
 async function firmaYonetimi(kapsayici) {
   kapsayici.innerHTML = `
     <div class="sayfa-baslik">
@@ -3000,7 +3135,9 @@ onAuthStateChanged(auth, async (firebaseUser) => {
     return;
   }
 
-  durum.kullanici = { uid: firebaseUser.uid, ...snap.data() };
+  const veri = snap.data();
+  if (!veri.rol) veri.rol = "personel";
+  durum.kullanici = { uid: firebaseUser.uid, ...veri };
 
   const firmaSnap = await getDoc(doc(db, "sistem", "firma"));
   if (firmaSnap.exists() && firmaSnap.data().ad) durum.firmaAdi = firmaSnap.data().ad;
